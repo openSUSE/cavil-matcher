@@ -27,7 +27,7 @@ sub slurp { open my $fh, '<:raw', $_[0] or die $!; local $/; my $c = <$fh>; clos
 my $dir     = tempdir(CLEANUP => 1);
 my $builder = Cavil::Matcher::init_matcher();
 my $id      = 0;
-my $jsonl   = 't/../../lib/Cavil/resources/license_patterns.jsonl';
+my $jsonl   = $ENV{CAVIL_MATCHER_CORPUS_FILE} // '../cavil/lib/Cavil/resources/license_patterns.jsonl';
 if (-r $jsonl && eval { require Cpanel::JSON::XS; 1 }) {
   open my $fh, '<', $jsonl or die $!;
   while (my $line = <$fh>) {

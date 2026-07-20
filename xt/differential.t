@@ -86,7 +86,7 @@ for my $fn (glob('t/fixtures/snippets/*.txt'), glob('t/fixtures/licenses/04licen
 }
 
 # --- large-scale corpus differential (real production patterns), if available --------------------
-my $jsonl = 't/../../lib/Cavil/resources/license_patterns.jsonl';
+my $jsonl = $ENV{CAVIL_MATCHER_CORPUS_FILE} // '../cavil/lib/Cavil/resources/license_patterns.jsonl';
 SKIP: {
   skip 'production corpus not available', 1 unless -r $jsonl && eval { require Cpanel::JSON::XS; 1 };
   my $limit = $ENV{CAVIL_MATCHER_CORPUS} || 4000;
