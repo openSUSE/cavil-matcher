@@ -1,0 +1,15 @@
+^blib/
+^Matcher\.c$
+^Makefile$
+^Makefile\.old$
+^pm_to_blib
+^MYMETA\.
+\.o$
+\.bs$
+\.so$
+^cover_db/
+\bcorrupt\.
+~$
+^\.git
+^\.github/
+\.bak$

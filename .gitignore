@@ -1,0 +1,18 @@
+# Build artifacts
+/blib/
+/Makefile
+/Makefile.old
+/pm_to_blib
+MYMETA.*
+*.o
+*.bs
+*.def
+*.so
+
+# Devel::Cover
+/cover_db/
+
+# Editors / misc
+*.bak
+*~
+.DS_Store
