@@ -214,7 +214,11 @@ static const long SKIP_WORK_BUDGET = 5000000;
 
 void Segment::check_token_matches(const TokenList& tokens, std::vector<RawMatch>& ms, int tokenlist_offset,
                                   int tokenlist_index, unsigned int offset, uint32_t node, long& budget) const {
-  if (offset >= tokens.size()) return;
+  // Only bail when offset is *past* EOF (a skip that overshot the last token): the loop's own
+  // offset==size branch must still run so a pattern whose terminal node sits exactly at EOF is reported
+  // - e.g. a single-token pattern that is the final token of the file. (This fixes a missed match the
+  // previous engine had, where the guard used >= and returned before checking the terminal node.)
+  if (offset > tokens.size()) return;
   if (--budget < 0) return;    // work budget exhausted; stop exploring (adversarial skip fan-out guard)
 
   while (node != SEG_NONE) {

@@ -171,7 +171,7 @@ write_manifest(<<'JSON');
              {"file":"good-seg.seg","checksum":"abc","pattern_count":"5"},
              {"file":"bare.seg"},
              {"file":"countref.seg","pattern_count":{}}],
- "tombstones":[1,2,{"x":1},null,"7"]}
+ "tombstones":[1,2,{"x":1},null,"7",4294967297,"99999999999",-5,3.5]}
 JSON
 my $bad = Cavil::Matcher::Manifest->new(dir => $d6);
 is($bad->generation,         0, 'non-integer generation sanitized to 0');
@@ -186,7 +186,11 @@ is_deeply(
   ],
   'segment fields coerced (ref/empty/traversal names dropped; ref checksum -> "", bad count -> 0)'
 );
-is_deeply([@{$bad->tombstones}], [1, 2, '7'], 'non-scalar tombstone ids dropped');
+is_deeply(
+  [@{$bad->tombstones}],
+  [1, 2, '7'],
+  'tombstones sanitized: refs, undef, out-of-range (>uint32), negative and non-integer ids dropped'
+);
 
 # Generation given as a non-scalar is also sanitized rather than fatal.
 write_manifest('{"format_version":1,"generation":{"x":1}}');

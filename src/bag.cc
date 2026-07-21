@@ -189,11 +189,20 @@ bool Bag::load(const std::string& path) {
   FILE* file = fopen(path.c_str(), "rb");
   if (!file) return false;
 
-  // Read the whole file (bounded by its size), then validate before trusting anything.
-  std::vector<char> buf;
-  char              tmp[65536];
-  size_t            n;
-  while ((n = fread(tmp, 1, sizeof(tmp), file)) > 0) buf.insert(buf.end(), tmp, tmp + n);
+  // Read the whole file (CRC covers the full payload, so it must all be in memory), but refuse an
+  // absurdly large file before it can exhaust memory - a sanity bound far above any real bag, not a
+  // format limit.
+  static const size_t MAX_BAG_BYTES = size_t(2) << 30;    // 2 GiB
+  std::vector<char>   buf;
+  char                tmp[65536];
+  size_t              n;
+  while ((n = fread(tmp, 1, sizeof(tmp), file)) > 0) {
+    if (buf.size() + n > MAX_BAG_BYTES) {
+      fclose(file);
+      return false;
+    }
+    buf.insert(buf.end(), tmp, tmp + n);
+  }
   fclose(file);
 
   if (buf.size() < sizeof(BagHeader)) return false;

@@ -80,7 +80,11 @@ sub _clean_segments ($segments) {
 
 sub _clean_tombstones ($tombstones) {
   return [] unless ref $tombstones eq 'ARRAY';
-  return [grep { defined && !ref } @$tombstones];
+
+  # Keep only non-negative integers within the engine's 32-bit pattern-id space. Dropping refs,
+  # non-numeric, and out-of-range values stops a corrupt manifest from wrapping (e.g. 2^32+1 -> 1) and
+  # suppressing the wrong pattern.
+  return [grep { defined && !ref && /^[0-9]+$/ && $_ <= 4294967295 } @$tombstones];
 }
 
 sub data       ($self) { $self->{data} }

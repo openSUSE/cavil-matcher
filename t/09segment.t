@@ -200,4 +200,38 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   is($gap->('hello xx yy zz world'), 0, '$SKIP2 does not match a gap wider than N');
 }
 
+# --- Single-token pattern at end of file (regression) --------------------------------------------
+# A one-token pattern whose terminal node sits exactly at EOF must still match; the previous engine
+# missed this because its guard returned before checking the terminal node.
+{
+  my $stm = Cavil::Matcher::init_matcher();
+  $stm->add_pattern(1, Cavil::Matcher::parse_tokens('copyleft'));
+
+  my $eof = "$dir/single_eof";
+  open my $fh, '>:raw', $eof or die $!;
+  print {$fh} 'some text then copyleft';    # last token, no trailing newline
+  close $fh;
+  cmp_deeply($stm->find_matches($eof), [[1, 1, 1]], 'single-token pattern as the last token of the file matches');
+
+  my $only = "$dir/single_only";
+  open my $f2, '>:raw', $only or die $!;
+  print {$f2} "copyleft\n";
+  close $f2;
+  cmp_deeply($stm->find_matches($only), [[1, 1, 1]], 'single-token pattern alone in the file matches');
+}
+
+# --- Out-of-range tombstone ids are ignored, not wrapped -----------------------------------------
+# (uint32_t) truncation would turn 2^32+1 into 1; set_tombstones must ignore such values instead of
+# suppressing an unrelated pattern.
+{
+  my $tm = Cavil::Matcher::init_matcher();
+  $tm->add_pattern(1, Cavil::Matcher::parse_tokens('permission is hereby granted'));
+  my $probe = "$dir/tombprobe";
+  open my $fh, '>:raw', $probe or die $!;
+  print {$fh} "permission is hereby granted\n";
+  close $fh;
+  $tm->set_tombstones([4294967297]);    # 2^32 + 1: must NOT wrap to 1
+  is(scalar @{$tm->find_matches($probe)}, 1, 'an out-of-range tombstone id does not suppress pattern 1');
+}
+
 done_testing();

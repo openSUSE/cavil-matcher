@@ -248,7 +248,9 @@ void matcher_set_tombstones(Matcher* m, AV* ids) {
   SSize_t               len = av_top_index(ids) + 1;
   for (SSize_t i = 0; i < len; ++i) {
     SV** e = av_fetch(ids, i, 0);
-    if (e) t.push_back((uint32_t)SvUV(*e));
+    if (!e) continue;
+    UV id = SvUV(*e);
+    if (id <= 0xFFFFFFFFu) t.push_back((uint32_t)id);    // ignore out-of-range ids rather than wrap them
   }
   m->set_tombstones(t);
 }
