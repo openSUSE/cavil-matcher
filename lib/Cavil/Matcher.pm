@@ -88,7 +88,9 @@ Token-level Levenshtein distance between two L</normalize> results.
 
   my $rows = Cavil::Matcher::read_lines($file, \%wanted_lines);   # [[line, value, text], ...]
 
-Return the requested lines of a file as raw (undecoded) bytes.
+Return the requested lines of a file as raw (undecoded) bytes. B<Note:> C<%wanted_lines> is consumed -
+each line found is deleted from the hash (an early-exit optimization), so pass a fresh hash if you need
+to reuse it.
 
 =head2 init_hash
 
@@ -144,7 +146,8 @@ and C<hash64>.
 =head1 Cavil::Matcher::Bag
 
 tf-idf closest-match model from L</init_bag_of_patterns>: C<set_patterns(\%id_to_text)>,
-C<best_for($text, $count)>, C<dump($file)> and C<load($file)>.
+C<best_for($text, $count)>, C<dump($file)> and C<load($file)>. C<dump> and C<load> return true on
+success; a failed C<load> (missing/truncated file) leaves the model unchanged.
 
 =head1 SEE ALSO
 

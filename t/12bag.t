@@ -37,7 +37,7 @@ ok($top3->[0]{match} >= $top3->[-1]{match}, 'results are ordered by descending s
 # dump / load round-trip ranks identically.
 my $dir  = tempdir(CLEANUP => 1);
 my $file = "$dir/bag";
-$bag->dump($file);
+ok($bag->dump($file), 'bag dump reports success');
 my $loaded = Cavil::Matcher::init_bag_of_patterns;
 ok($loaded->load($file), 'bag load succeeds');
 for my $num (sort { $a <=> $b } keys %TOP) {
@@ -50,5 +50,21 @@ is($loaded->load("$dir/missing"), 0, 'loading a missing bag returns false');
 for my $text ('', 'x', "binary\x00text", join('', map { chr(int(rand(256))) } 1 .. 2000)) {
   ok(ref($bag->best_for($text, 3)) eq 'ARRAY', 'best_for survives hostile/edge input');
 }
+
+# A failed load (truncated file) must leave the existing model intact, not wipe it.
+my $sample = slurp('t/fixtures/licenses/04license.1.txt');
+my $before = $loaded->best_for($sample, 1);
+ok(@$before, 'model matches before a bad load');
+my $truncated = "$dir/truncated";
+{
+  open my $fh, '<:raw', $file or die $!;
+  read $fh, my $bytes, 32;    # a valid header prefix, then nothing - a truncated cache
+  close $fh;
+  open my $out, '>:raw', $truncated or die $!;
+  print {$out} $bytes;
+  close $out;
+}
+is($loaded->load($truncated), 0, 'loading a truncated bag returns false');
+cmp_deeply($loaded->best_for($sample, 1), $before, 'a failed load leaves the existing model intact');
 
 done_testing();

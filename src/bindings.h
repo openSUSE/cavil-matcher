@@ -43,7 +43,7 @@ Bag* pattern_init_bag();
 void destroy_bag(Bag* b);
 void bag_set_patterns(Bag* b, HV* patterns);
 AV*  bag_best_for(Bag* b, const char* str, int count);
-void bag_dump(Bag* b, const char* filename);
+int  bag_dump(Bag* b, const char* filename);
 int  bag_load(Bag* b, const char* filename);
 
 #endif

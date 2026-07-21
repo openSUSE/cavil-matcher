@@ -102,61 +102,66 @@ std::vector<Bag::Hit> Bag::best_for(const std::string& snippet, unsigned int cou
   return hits;
 }
 
-void Bag::dump(const std::string& path) const {
+bool Bag::dump(const std::string& path) const {
   FILE* file = fopen(path.c_str(), "wb");
-  if (!file) return;
+  if (!file) return false;
+
+  bool ok  = true;
+  auto put = [&](const void* p, size_t n) {
+    if (ok && fwrite(p, n, 1, file) != 1) ok = false;
+  };
 
   uint64_t count = _idfs.size();
-  fwrite(&count, sizeof(count), 1, file);
+  put(&count, sizeof(count));
   for (const auto& it : _idfs) {
     uint64_t f1 = it.first;
     double   f2 = it.second;
-    fwrite(&f1, sizeof(f1), 1, file);
-    fwrite(&f2, sizeof(f2), 1, file);
+    put(&f1, sizeof(f1));
+    put(&f2, sizeof(f2));
   }
 
   count = _patterns.size();
-  fwrite(&count, sizeof(count), 1, file);
+  put(&count, sizeof(count));
   for (const auto& p : _patterns) {
     uint64_t f1 = p.index;
-    fwrite(&f1, sizeof(f1), 1, file);
+    put(&f1, sizeof(f1));
     double f2 = p.square_sum;
-    fwrite(&f2, sizeof(f2), 1, file);
+    put(&f2, sizeof(f2));
     uint64_t c = p.tf_idfs.size();
-    fwrite(&c, sizeof(c), 1, file);
+    put(&c, sizeof(c));
     for (const auto& t : p.tf_idfs) {
       uint64_t h = t.hash;
       double   v = t.value;
-      fwrite(&h, sizeof(h), 1, file);
-      fwrite(&v, sizeof(v), 1, file);
+      put(&h, sizeof(h));
+      put(&v, sizeof(v));
     }
   }
-  fclose(file);
+  if (fclose(file) != 0) ok = false;
+  return ok;
 }
 
 bool Bag::load(const std::string& path) {
   FILE* file = fopen(path.c_str(), "rb");
   if (!file) return false;
 
+  // Parse into locals and swap into the object only on full success, so a truncated or malformed cache
+  // file leaves any existing model intact rather than wiping it.
+  std::map<uint64_t, double> idfs;
+  std::vector<Pattern>       patterns;
+
   bool     ok    = true;
   uint64_t count = 0;
-  if (fread(&count, sizeof(count), 1, file) != 1) {
-    fclose(file);
-    return false;
-  }
-
-  _idfs.clear();
-  while (count-- && ok) {
+  if (fread(&count, sizeof(count), 1, file) != 1) ok = false;
+  while (ok && count--) {
     uint64_t f1 = 0;
     double   f2 = 0;
     if (fread(&f1, sizeof(f1), 1, file) != 1 || fread(&f2, sizeof(f2), 1, file) != 1) {
       ok = false;
       break;
     }
-    _idfs[f1] = f2;
+    idfs[f1] = f2;
   }
 
-  _patterns.clear();
   if (ok && fread(&count, sizeof(count), 1, file) != 1) ok = false;
   while (ok && count--) {
     Pattern  p;
@@ -170,7 +175,7 @@ bool Bag::load(const std::string& path) {
     }
     p.index      = f1;
     p.square_sum = f2;
-    while (f3-- && ok) {
+    while (ok && f3--) {
       uint64_t h = 0;
       double   v = 0;
       if (fread(&h, sizeof(h), 1, file) != 1 || fread(&v, sizeof(v), 1, file) != 1) {
@@ -179,9 +184,12 @@ bool Bag::load(const std::string& path) {
       }
       p.tf_idfs.push_back({h, v});
     }
-    _patterns.push_back(std::move(p));
+    patterns.push_back(std::move(p));
   }
 
   fclose(file);
-  return ok;
+  if (!ok) return false;
+  _idfs     = std::move(idfs);
+  _patterns = std::move(patterns);
+  return true;
 }

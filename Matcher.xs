@@ -130,9 +130,11 @@ AV *best_for(Cavil::Matcher::Bag self, const char *str, int count)
   OUTPUT:
     RETVAL
 
-void dump(Cavil::Matcher::Bag self, const char *filename)
+int dump(Cavil::Matcher::Bag self, const char *filename)
   CODE:
-    bag_dump(self, filename);
+    RETVAL = bag_dump(self, filename);
+  OUTPUT:
+    RETVAL
 
 int load(Cavil::Matcher::Bag self, const char *filename)
   CODE:

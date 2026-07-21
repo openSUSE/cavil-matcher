@@ -23,7 +23,7 @@ public:
 
   void             set_patterns(const std::vector<std::pair<uint64_t, std::string>>& patterns);
   std::vector<Hit> best_for(const std::string& snippet, unsigned int count) const;
-  void             dump(const std::string& path) const;
+  bool             dump(const std::string& path) const;
   bool             load(const std::string& path);
 
 private:

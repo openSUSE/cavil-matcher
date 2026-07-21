@@ -9,6 +9,13 @@
 #
 # The native engine (Cavil::Matcher::Engine) only walks and resolves; every decision about which
 # segments are active and which patterns are tombstoned is made here, in readable Perl.
+#
+# CONCURRENCY - SINGLE WRITER PRECONDITION. add_segment/tombstone/merge read the manifest, bump its
+# generation in memory, write generation-derived files, then save. The save itself is atomic for
+# readers (temp + rename in Manifest), but writers are NOT serialized: two processes starting from the
+# same generation can clobber each other's update (last writer wins). Callers MUST ensure a single
+# writer at a time - e.g. run all index mutations through one serialized job, or hold an advisory lock
+# around the whole read-modify-save. Concurrent readers (building a matcher) are always safe.
 
 package Cavil::Matcher::Index;
 

@@ -95,6 +95,11 @@ static int levenshtein(AV* s, int len_s, AV* t, int len_t) {
   return (int)v1[len_t];
 }
 
+// NOTE: av_len returns the highest index, not the element count, so this passes count-1 as the length.
+// That is an intentional, faithful copy of Spooky::Patterns::XS::distance (which has the same quirk): it
+// makes distance() bit-identical to the previous engine (see xt/differential.t), which is what matters
+// during the transition. distance() is not used anywhere in Cavil today; once the old engine is retired
+// this can become a correct Levenshtein (pass av_top_index()+1) - it would then differ from Spooky.
 int pattern_distance(AV* a1, AV* a2) {
   dTHX;
   return levenshtein(a1, av_len(a1), a2, av_len(a2));
@@ -240,5 +245,5 @@ AV* bag_best_for(Bag* b, const char* str, int count) {
   return result;
 }
 
-void bag_dump(Bag* b, const char* filename) { b->dump(filename); }
+int  bag_dump(Bag* b, const char* filename) { return b->dump(filename) ? 1 : 0; }
 int  bag_load(Bag* b, const char* filename) { return b->load(filename) ? 1 : 0; }

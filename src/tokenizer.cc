@@ -31,7 +31,9 @@ bool Tokenizer::to_ignore(uint64_t t) const {
 bool Tokenizer::to_ignore(const char* text, unsigned int len) const {
   if (!len) return true;
   for (unsigned int i = 0; i < len; ++i) {
-    if (isalnum(text[i])) return false;
+    // Cast to unsigned char: the ctype functions are only defined for unsigned-char values (or EOF);
+    // passing a negative char is undefined behaviour on platforms where char is signed.
+    if (isalnum(static_cast<unsigned char>(text[i]))) return false;
   }
   return true;
 }
@@ -76,8 +78,8 @@ void Tokenizer::tokenize(TokenList& result, char* str, int linenumber) const {
 
   const char* start = str;
   for (; *str; ++str) {
-    if (*str < ' ') *str = ' ';    // snipe out escape sequences
-    *str          = tolower(*str);
+    if (*str < ' ') *str = ' ';    // snipe out escape sequences (deliberate, matches the previous engine)
+    *str          = tolower(static_cast<unsigned char>(*str));    // cast: ctype UB on negative char
     bool ignored  = (strchr(ignore_seps, *str) != NULL);
     if (ignored || strchr(single_seps, *str)) {
       add_token(result, start, str - start, linenumber);
