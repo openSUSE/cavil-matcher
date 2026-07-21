@@ -38,7 +38,8 @@ make test
 sudo make install
 ```
 
-Requires a C++17 compiler (`g++`) and [`Cpanel::JSON::XS`](https://metacpan.org/pod/Cpanel::JSON::XS).
+Requires a 64-bit Perl (token hashes are 64-bit), a C++17 compiler (`g++`), and
+[`Cpanel::JSON::XS`](https://metacpan.org/pod/Cpanel::JSON::XS).
 
 ## Synopsis
 
@@ -55,7 +56,11 @@ my $matches = $m->find_matches('some/source/file.c');   # [[pattern_id, start_li
 my $idx = Cavil::Matcher::Index->new(dir => '/var/cache/cavil/index');
 $idx->add_segment([[1, 'Permission is hereby granted ...'], [2, 'GNU General Public License ...']]);
 $idx->tombstone(1);                       # remove a pattern - no recompile
-my $engine  = $idx->matcher;              # ready to query, with the active segments mmapped
+
+# strict => 1 fails closed if any active segment is missing/corrupt, so an authoritative scan never runs
+# against a partial index (a silent "no match"). Omit it for best-effort/diagnostic use, which skips a
+# bad segment and keeps going.
+my $engine  = $idx->matcher(strict => 1);   # active segments mmapped; refuses to build a partial matcher
 my $results = $engine->find_matches('some/source/file.c');
 ```
 

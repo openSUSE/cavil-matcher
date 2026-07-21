@@ -68,9 +68,10 @@ Create a new matching engine (a L</Cavil::Matcher::Engine>).
 
   my $tokens = Cavil::Matcher::parse_tokens($pattern_text);
 
-Tokenize pattern text into the arrayref of token hashes that L</add_pattern> expects. C<$SKIP<n>> wildcards
-are recognised here: each matches from B<one> up to I<n> arbitrary words (at least one, at most I<n> - never
-a zero-word gap), with I<n> up to 99. A pattern may not begin or end with a skip.
+Tokenize pattern text into the arrayref of token hashes that L</add_pattern> expects. A C<$SKIP> wildcard
+(C<$SKIP> followed by a number I<n> up to 99) is recognised here: each matches from B<one> up to I<n>
+arbitrary words (at least one, at most I<n> - never a zero-word gap). A pattern may not begin or end with a
+skip.
 
 B<Input must be text.> This and L</normalize> take the string with C-string semantics, so an embedded NUL
 byte terminates the input (everything after it on that call is ignored). That is fine for their intended use
@@ -103,6 +104,11 @@ Return the requested lines of a file as raw (undecoded) bytes. B<Note:> C<%wante
 each line found is deleted from the hash (an early-exit optimization), so pass a fresh hash if you need
 to reuse it.
 
+The returned text for a single physical line is capped at 1 MiB, to bound memory on pathological input
+(e.g. a minified or binary file that is one enormous line). L</find_matches> numbers such a line the same
+way, so a match reported past the first 1 MiB of a single line can point at text this call does not
+return. Real, line-wrapped source is unaffected; this only matters for degenerate multi-megabyte lines.
+
 =head2 init_hash
 
   my $hash = Cavil::Matcher::init_hash($seed1, $seed2);
@@ -121,11 +127,15 @@ The matching engine returned by L</init_matcher>.
 
 =over 2
 
-=item add_pattern($id, $tokens)
+=item add_pattern
+
+  $engine->add_pattern($id, $tokens);
 
 Add a pattern (from L</parse_tokens>) to the in-memory delta segment.
 
-=item find_matches($file)
+=item find_matches
+
+  my $matches = $engine->find_matches($file);
 
 Scan a file and return the resolved matches as C<[[pattern_id, start_line, end_line], ...]>.
 

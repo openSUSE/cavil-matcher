@@ -3,7 +3,15 @@
 
 use strict;
 use warnings;
+use Config;
 use ExtUtils::MakeMaker;
+
+# Token hashes are 64-bit and cross the Perl boundary as UVs (SvUV/newSVuv). A Perl with a 32-bit UV
+# would truncate them and silently break matching, so refuse to build there rather than fail mysteriously
+# at runtime.
+die "Cavil::Matcher requires a Perl with 64-bit integers (\$Config{uvsize} >= 8); "
+  . "this perl has uvsize=$Config{uvsize}.\n"
+  if $Config{uvsize} < 8;
 
 # C++ core lives under src/; the XS shim (Matcher.xs) at the top marshals between Perl and it.
 my @cpp = qw(SpookyV2.cpp tokenizer.cc segment.cc matcher.cc bag.cc bindings.cc);
