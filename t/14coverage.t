@@ -272,4 +272,43 @@ is(scalar @{$iep->_manifest->segments}, 0, 'no segment is written for an empty-n
 $iep->add_segment([[2, ' .. '], [3, 'permission is hereby granted']]);
 is($iep->_manifest->segments->[0]{pattern_count}, 1, 'pattern_count reflects compiled patterns, not requested rows');
 
+# --- merge defers deleting retired segments so a racing reader can still mmap them ----------------
+# merge must NOT delete the segments it retires (a reader that read the old manifest may be about to open
+# them); it deletes only orphans left by a PREVIOUS merge. So the retired file survives one merge and is
+# collected by the next.
+my $dmg = tempdir(CLEANUP => 1);
+my $img = Cavil::Matcher::Index->new(dir => $dmg);
+$img->add_segment([[1, 'permission is hereby granted']]);
+my ($seg1) = map { (File::Spec->splitpath($_))[2] } glob "$dmg/seg-*.seg";
+ok($seg1, 'a delta segment exists after add_segment');
+
+$img->merge([[1, 'permission is hereby granted'], [2, 'redistributions of source code']]);
+my ($base2) = map { (File::Spec->splitpath($_))[2] } glob "$dmg/base-*.seg";
+ok(-e "$dmg/$seg1", 'merge keeps the just-retired delta segment (racing readers can still open it)');
+is_deeply([map { $_->{file} } @{$img->_manifest->segments}], [$base2], 'manifest references only the new base');
+
+$img->merge([[1, 'permission is hereby granted']]);
+ok(!-e "$dmg/$seg1", 'the next merge finally collects the earlier retired delta segment');
+ok(-e "$dmg/$base2", 'the base retired by THIS merge is itself kept one more cycle');
+
+my $mtgt = "$dmg/probe.txt";
+open my $mf, '>:raw', $mtgt or die $!;
+print {$mf} "permission is hereby granted\n";
+close $mf;
+cmp_ok(scalar @{$img->matcher(quiet => 1)->find_matches($mtgt)}, '>', 0, 'the merged index still matches throughout');
+ok($img->matcher(strict => 1), 'strict matcher() returns an engine when the index is healthy');
+
+# --- strict mode fails closed on a degraded index -----------------------------------------------
+# Default is best-effort (warn + skip a bad segment, still return an engine); strict => 1 refuses to
+# build a matcher against an incomplete index, so an authoritative scan cannot silently miss licenses.
+my $dst = tempdir(CLEANUP => 1);
+my $ist = Cavil::Matcher::Index->new(dir => $dst);
+$ist->add_segment([[1, 'permission is hereby granted']]);
+my $mst = Cavil::Matcher::Manifest->new(dir => $dst);
+$mst->add_segment(file => 'ghost.seg', checksum => 'deadbeef');    # names a segment not on disk
+$mst->save;
+ok($ist->matcher(quiet => 1), 'default matcher() returns a usable engine despite a missing segment');
+eval { $ist->matcher(quiet => 1, strict => 1) };
+like($@, qr/failed to load \(strict\)/, 'strict matcher() croaks on a degraded index');
+
 done_testing();

@@ -155,14 +155,26 @@ bool Segment::open(const char* data, size_t len) {
   if (h->format_version != SEGMENT_FORMAT_VERSION) return false;
   if (h->node_count < 1) return false;    // root must exist
 
+  // Compute the declared size overflow-safely. The counts are untrusted 32-bit values; on a 32-bit
+  // size_t their products/sum could wrap to a plausible total. So bound each count by the real file size
+  // (len) before multiplying, and add each part only while it still fits in the remaining space. This
+  // keeps `total` monotonically <= len at every step (no wraparound on any size_t width); the final
+  // exact-match check then also rejects truncation and trailing junk. The CRC only covers the declared
+  // payload, so this strict size check is what makes "the checksum covers everything that follows" hold.
+  if (h->node_count > len / sizeof(FlatNode)) return false;
+  if (h->child_count > len / sizeof(FlatChild)) return false;
+  if (h->skip_count > len / sizeof(FlatSkip)) return false;
   size_t nodes_bytes = (size_t)h->node_count * sizeof(FlatNode);
   size_t child_bytes = (size_t)h->child_count * sizeof(FlatChild);
   size_t skip_bytes  = (size_t)h->skip_count * sizeof(FlatSkip);
-  size_t total       = sizeof(SegmentHeader) + nodes_bytes + child_bytes + skip_bytes;
-  // Require an exact-size buffer: reject truncation (total > len), integer overflow (total wraps below
-  // the header), and trailing junk (total < len). The CRC only covers the declared payload, so a
-  // strict size check is what makes "the checksum covers everything that follows" actually hold.
-  if (total < sizeof(SegmentHeader) || total != len) return false;
+  size_t total       = sizeof(SegmentHeader);
+  if (nodes_bytes > len - total) return false;
+  total += nodes_bytes;
+  if (child_bytes > len - total) return false;
+  total += child_bytes;
+  if (skip_bytes > len - total) return false;
+  total += skip_bytes;
+  if (total != len) return false;
 
   if (cavil_crc32(data + sizeof(SegmentHeader), total - sizeof(SegmentHeader)) != h->payload_crc32) return false;
 

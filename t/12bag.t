@@ -53,6 +53,7 @@ ok($top3->[0]{match} >= $top3->[-1]{match}, 'results are ordered by descending s
 my $dir  = tempdir(CLEANUP => 1);
 my $file = "$dir/bag";
 ok($bag->dump($file), 'bag dump reports success');
+is(scalar(() = glob "$dir/*.tmp.*"), 0, 'bag dump (temp+rename) leaves no temp file behind');
 my $loaded = Cavil::Matcher::init_bag_of_patterns;
 ok($loaded->load($file), 'bag load succeeds');
 for my $num (sort { $a <=> $b } keys %TOP) {

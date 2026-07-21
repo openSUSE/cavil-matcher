@@ -291,6 +291,7 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   my $builder  = Cavil::Matcher::init_matcher();
   $builder->add_pattern(1, Cavil::Matcher::parse_tokens('permission is hereby granted'));
   ok($builder->dump($good_seg), 'built a good segment to load');
+  is(scalar(() = glob "$dir/*.tmp.*"), 0, 'matcher dump (temp+rename) leaves no temp file behind');
 
   my $probe = "$dir/loadprobe";
   open my $pf, '>:raw', $probe or die $!;

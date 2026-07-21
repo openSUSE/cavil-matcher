@@ -79,10 +79,16 @@ for my $fn (@txts) {
 # The authoritative set for the merge is "all patterns except the tombstoned victim".
 my @authoritative = map { [$_, $pat{$_}] } grep { $_ != $victim } @ids;
 my $g4            = $idx->merge(\@authoritative);
-is($g4,                                   4, 'merge bumps generation');
-is(nfiles("$dir/base-*.seg"),             1, 'one base segment after merge');
-is(nfiles("$dir/seg-*.seg"),              0, 'delta segments retired after merge');
+is($g4,                                 4, 'merge bumps generation');
+is(nfiles("$dir/base-*.seg"),           1, 'one base segment after merge');
+is(scalar @{$idx->_manifest->segments}, 1, 'manifest holds only the base after merge (deltas retired)');
+like($idx->_manifest->segments->[0]{file}, qr/^base-/, 'the sole active segment is the base');
 is(scalar @{$idx->_manifest->tombstones}, 0, 'tombstones cleared after merge');
+
+# Deferred deletion: the retired delta files stay on disk one more cycle so a reader that read the old
+# manifest can still mmap them (readers do not lock); the next merge collects them. (The next-merge
+# collection itself is covered in t/14coverage.t.)
+is(nfiles("$dir/seg-*.seg"), 2, 'retired delta segments remain on disk until the next merge');
 for my $fn (@txts) {
   cmp_deeply(
     sorted_matches($idx->matcher->find_matches($fn)),

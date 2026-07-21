@@ -9,6 +9,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <unistd.h>
 
 void Bag::tokenize(const std::string& str, std::map<uint64_t, uint64_t>& localwords) const {
   std::vector<char> copy(str.begin(), str.end());
@@ -155,11 +157,17 @@ bool Bag::dump(const std::string& path) const {
   h.pattern_count = _patterns.size();
   h.crc32         = cavil_crc32(payload.data(), payload.size());
 
-  FILE* file = fopen(path.c_str(), "wb");
+  // Write to a temp file and rename into place, so a crash/short write mid-dump cannot damage an
+  // existing good cache at `path` (and a reader mmapping the old file keeps a valid inode across the
+  // swap). The cache is disposable/rebuilt from the DB, so no fsync is needed.
+  std::string tmp  = path + ".tmp." + std::to_string((long)getpid());
+  FILE*       file = fopen(tmp.c_str(), "wb");
   if (!file) return false;
   bool ok = fwrite(&h, sizeof(h), 1, file) == 1;
   if (ok && !payload.empty()) ok = fwrite(payload.data(), payload.size(), 1, file) == 1;
   if (fclose(file) != 0) ok = false;
+  if (ok && rename(tmp.c_str(), path.c_str()) != 0) ok = false;
+  if (!ok) remove(tmp.c_str());    // don't leave a partial temp behind
   return ok;
 }
 

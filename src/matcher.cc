@@ -72,10 +72,17 @@ bool Matcher::attach(const std::string& path) {
 
 bool Matcher::dump(const std::string& path) {
   std::vector<char> buf = _build.compile(_generation);
-  FILE*             f   = fopen(path.c_str(), "wb");
+
+  // Write to a temp file and rename into place, so a crash/short write/full disk mid-dump cannot damage
+  // an existing good cache at `path` (and a concurrent reader mmapping the old file keeps a valid inode
+  // across the swap). The cache is disposable/rebuilt from the DB, so no fsync is needed.
+  std::string tmp = path + ".tmp." + std::to_string((long)getpid());
+  FILE*       f   = fopen(tmp.c_str(), "wb");
   if (!f) return false;
   bool ok = fwrite(buf.data(), 1, buf.size(), f) == buf.size();
   if (fclose(f) != 0) ok = false;
+  if (ok && rename(tmp.c_str(), path.c_str()) != 0) ok = false;
+  if (!ok) remove(tmp.c_str());    // don't leave a partial temp behind
   return ok;
 }
 

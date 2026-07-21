@@ -16,7 +16,9 @@
 # serialize instead of clobbering each other's update (which, unlocked, would be last-writer-wins on a
 # shared generation-derived filename). The lock is advisory and host-local - which is the right scope,
 # since the compiled index is a per-host cache (each host mmaps its own copy). Reads (building a matcher)
-# never lock: they rely on the atomic temp+rename in Manifest and are always safe.
+# never lock: the manifest swap is atomic (temp+rename), and merge defers deleting the segments it
+# retires until the *next* merge (see merge), so a reader that read the old manifest can still mmap the
+# files it named. Readers are therefore always safe without a lock.
 
 package Cavil::Matcher::Index;
 
@@ -167,14 +169,22 @@ sub merge ($self, $patterns) {
     $man->clear_tombstones;
     $man->save;
 
-    # Unlink the superseded segments only after the manifest that points away from them has been written
-    # and atomically renamed, so a concurrent reader never follows the manifest to a just-deleted file.
-    # This ordering is not crash-durable (no fsync): the whole index is a disposable cache rebuilt from
-    # PostgreSQL, so the recovery model for a power-loss mid-merge is simply to rebuild, not to guarantee
-    # the on-disk bytes survived.
-    for my $f (@old) {
-      next if $f eq $file;    # uncoverable branch true (base name is unique per generation)
-      unlink File::Spec->catfile($self->{dir}, $f);
+    # Deferred deletion. Readers do not lock: one may have read the *old* manifest just before our swap
+    # and be about to mmap the segments it named. If we deleted those now, that reader's open() would fail
+    # and it would build a partial matcher. So we do NOT delete the segments this merge retires (@old);
+    # we delete only files orphaned by a PREVIOUS merge - on disk but named by neither the manifest we
+    # just replaced nor the new base. Since compaction is rare, "one merge ago" is an enormous grace
+    # period next to a reader's read-manifest-then-mmap window, so no reader lock or timer is needed. The
+    # retired @old become deletable at the next merge. (Not crash-durable - the index is a disposable
+    # cache rebuilt from PostgreSQL - so recovery from a power loss mid-merge is simply to rebuild.)
+    my %keep = map { $_ => 1 } (@old, $file);
+    if (opendir my $dh, $self->{dir}) {    # uncoverable branch false (the index dir always exists here)
+      for my $f (readdir $dh) {
+        next unless $f =~ /^(?:seg|base)-[0-9]+\.seg\z/;
+        next if $keep{$f};
+        unlink File::Spec->catfile($self->{dir}, $f);
+      }
+      closedir $dh;
     }
     return $gen;
   });
@@ -188,10 +198,12 @@ sub matcher ($self, %opts) {
   my $engine = Cavil::Matcher::init_matcher();
   $engine->set_generation($man->generation);
 
+  my $failed = 0;
   for my $seg (@{$man->segments}) {
     my $path = File::Spec->catfile($self->{dir}, $seg->{file});
     unless (-r $path) {
       warn "cavil-matcher: segment $seg->{file} missing; skipping\n" unless $opts{quiet};
+      $failed++;
       next;
     }
 
@@ -199,12 +211,23 @@ sub matcher ($self, %opts) {
     # one); the manifest reader guarantees this field is always a defined string, so no undef check.
     if (length $seg->{checksum} && _checksum($path) ne $seg->{checksum}) {
       warn "cavil-matcher: segment $seg->{file} checksum mismatch; skipping\n" unless $opts{quiet};
+      $failed++;
       next;
     }
     unless ($engine->attach($path)) {
       warn "cavil-matcher: segment $seg->{file} failed validation; skipping\n" unless $opts{quiet};
+      $failed++;
       next;
     }
+  }
+
+  # Availability vs. correctness: by default a damaged/missing segment is skipped so a scan can still run
+  # (best effort), but that means an authoritative scan could quietly run against a partial index and
+  # report false negatives. Callers that must not scan against an incomplete index pass strict => 1 to
+  # fail closed instead.
+  if ($opts{strict} && $failed) {
+    my $total = scalar @{$man->segments};
+    croak "cavil-matcher: $failed of $total segment(s) failed to load (strict)";
   }
 
   my @tombs = @{$man->tombstones};
