@@ -115,6 +115,7 @@ is(attach_bytes($bad_crc), 0, 'flipped payload byte fails CRC');
 is(attach_bytes(substr($good, 0, 20)),                                0, 'truncated file rejected');
 is(attach_bytes(''),                                                  0, 'empty file rejected');
 is(attach_bytes('not a segment at all, just random text bytes here'), 0, 'garbage file rejected');
+is(attach_bytes($good . 'trailing junk'),                             0, 'trailing bytes after payload rejected');
 
 # A matcher whose only segment failed to attach simply finds nothing (no crash).
 my $none = Cavil::Matcher::init_matcher();
@@ -143,6 +144,32 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   my $m = $nulm->find_matches($next_line);
   is(scalar @$m, 1, 'the same text on a later line is matched normally');
   is($m->[0][0], 1, 'matched the expected pattern on the post-NUL line');
+}
+
+# --- Chunk-as-line contract for very long physical lines (pinned) --------------------------------
+# Line numbers count physical newlines, not read chunks: a very long single physical line is read in
+# several internal chunks but the match must still be reported on line 1. (A regression here would put
+# reviewers/UI on the wrong line.)
+{
+  my $lm = Cavil::Matcher::init_matcher();
+  $lm->add_pattern(1, Cavil::Matcher::parse_tokens('permission is hereby granted'));
+
+  my $longline = "$dir/longline";
+  open my $fh, '>:raw', $longline or die $!;
+  print {$fh} ('z ' x 4200) . "permission is hereby granted\n";    # >8000 bytes before the pattern
+  close $fh;
+  cmp_deeply($lm->find_matches($longline), [[1, 1, 1]], 'match in a very long single line is reported on line 1');
+
+  # And a match on a genuinely later line still gets the right number, even after a long first line.
+  my $twolines = "$dir/twolines";
+  open my $fh2, '>:raw', $twolines or die $!;
+  print {$fh2} ('z ' x 4200) . "filler\npermission is hereby granted\n";
+  close $fh2;
+  cmp_deeply($lm->find_matches($twolines), [[1, 2, 2]], 'the following line is correctly numbered 2, not 3+');
+
+  # read_lines uses the same numbering, so it agrees with find_matches.
+  my $rl = Cavil::Matcher::read_lines($twolines, {2 => 1});
+  is($rl->[0][0], 2, 'read_lines agrees: the pattern is on line 2');
 }
 
 done_testing();

@@ -51,6 +51,10 @@ for my $text ('', 'x', "binary\x00text", join('', map { chr(int(rand(256))) } 1 
   ok(ref($bag->best_for($text, 3)) eq 'ARRAY', 'best_for survives hostile/edge input');
 }
 
+# Asking for zero (or, via the XS boundary, a negative) result count returns nothing - never UB.
+is_deeply($bag->best_for('permission is hereby granted',  0), [], 'best_for(count=0) returns empty');
+is_deeply($bag->best_for('permission is hereby granted', -1), [], 'best_for(negative count) returns empty');
+
 # The cache is a versioned, CRC-checked format: truncated / wrong-magic / wrong-version / corrupt
 # files are all rejected, and a rejected load must leave any existing model intact (not wipe it).
 my $sample = slurp('t/fixtures/licenses/04license.1.txt');

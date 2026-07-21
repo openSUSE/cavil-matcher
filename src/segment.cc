@@ -3,6 +3,7 @@
 
 #include "segment.h"
 
+#include <array>
 #include <cstring>
 #include <iostream>
 
@@ -10,16 +11,17 @@
 // CRC32 (IEEE, reflected) - small table-based implementation, no dependencies.
 // ---------------------------------------------------------------------------
 uint32_t cavil_crc32(const void* data, size_t len) {
-  static uint32_t table[256];
-  static bool     ready = false;
-  if (!ready) {
+  // Thread-safe one-time init: C++11 guarantees a function-local static is initialized exactly once
+  // even under concurrent calls, so this cannot race the way a plain "ready" flag would.
+  static const std::array<uint32_t, 256> table = [] {
+    std::array<uint32_t, 256> t{};
     for (uint32_t i = 0; i < 256; ++i) {
       uint32_t c = i;
       for (int k = 0; k < 8; ++k) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-      table[i] = c;
+      t[i] = c;
     }
-    ready = true;
-  }
+    return t;
+  }();
   const uint8_t* p   = static_cast<const uint8_t*>(data);
   uint32_t       crc = 0xFFFFFFFFu;
   for (size_t i = 0; i < len; ++i) crc = table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
@@ -153,7 +155,10 @@ bool Segment::open(const char* data, size_t len) {
   size_t child_bytes = (size_t)h->child_count * sizeof(FlatChild);
   size_t skip_bytes  = (size_t)h->skip_count * sizeof(FlatSkip);
   size_t total       = sizeof(SegmentHeader) + nodes_bytes + child_bytes + skip_bytes;
-  if (total < sizeof(SegmentHeader) || total > len) return false;    // overflow / truncation
+  // Require an exact-size buffer: reject truncation (total > len), integer overflow (total wraps below
+  // the header), and trailing junk (total < len). The CRC only covers the declared payload, so a
+  // strict size check is what makes "the checksum covers everything that follows" actually hold.
+  if (total < sizeof(SegmentHeader) || total != len) return false;
 
   if (cavil_crc32(data + sizeof(SegmentHeader), total - sizeof(SegmentHeader)) != h->payload_crc32) return false;
 

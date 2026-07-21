@@ -76,6 +76,8 @@ void Bag::set_patterns(const std::vector<std::pair<uint64_t, std::string>>& patt
 }
 
 std::vector<Bag::Hit> Bag::best_for(const std::string& snippet, unsigned int count) const {
+  if (count == 0) return {};    // asking for zero results: nothing to do (and avoids hits.back() on empty)
+
   std::map<uint64_t, uint64_t> localwords;
   tokenize(snippet, localwords);
 

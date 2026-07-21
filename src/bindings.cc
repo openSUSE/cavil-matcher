@@ -118,6 +118,9 @@ int pattern_distance(AV* a1, AV* a2) {
   return levenshtein(a1, av_len(a1), a2, av_len(a2));
 }
 
+// Line numbers count physical newlines, not read chunks - identical logic to Matcher::find_matches, so
+// the two always agree on numbering (which is what snippet extraction relies on). A physical line longer
+// than the buffer is read in pieces sharing one line number; reads stay bounded (fixed-size chunks).
 AV* pattern_read_lines(const char* filename, HV* needed_lines) {
   dTHX;
   AV*   ret   = newAV();
@@ -129,11 +132,13 @@ AV* pattern_read_lines(const char* filename, HV* needed_lines) {
   char   line[8000];
   int    linenumber = 1;
   while (fgets(line, sizeof(line) - 1, input)) {
+    size_t l        = strlen(line);
+    bool   line_end = l > 0 && line[l - 1] == '\n';
+
     int len = snprintf(buffer, sizeof(buffer), "%d", linenumber);
     SV* val = hv_delete(needed_lines, buffer, len, 0);
     if (val) {
-      size_t l = strlen(line);
-      if (l && line[l - 1] == '\n') line[--l] = 0;
+      if (line_end) line[--l] = 0;    // chop the trailing newline
       AV* row = newAV();
       av_push(row, newSVuv(linenumber));
       av_push(row, newSVuv(SvUV(val)));
@@ -141,7 +146,7 @@ AV* pattern_read_lines(const char* filename, HV* needed_lines) {
       av_push(ret, newRV_noinc((SV*)row));
       if (--remaining <= 0) break;
     }
-    ++linenumber;
+    if (line_end) ++linenumber;
   }
   fclose(input);
   return ret;

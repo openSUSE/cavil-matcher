@@ -119,8 +119,17 @@ std::vector<ResolvedMatch> Matcher::find_matches(const std::string& path) {
   TokenList             ts;
   int                   token_offset = 0;
 
+  // Line numbers count physical newlines, not read chunks. fgets stops at the first newline or when
+  // the buffer fills, so a physical line longer than the buffer arrives in several chunks; we advance
+  // the line number only on the chunk that actually ended with a newline, so all pieces of one long
+  // line share one (correct) number. Memory stays bounded - we keep reading fixed-size chunks rather
+  // than slurping whole lines, so a pathological single line cannot exhaust memory. (This intentionally
+  // differs from the previous engine, which counted chunks; it fixes wrong line numbers on long lines.)
   while (fgets(line, sizeof(line) - 1, input)) {
-    tokenizer().tokenize(ts, line, linenumber++);
+    size_t chunk_len = strlen(line);
+    bool   line_end  = chunk_len > 0 && line[chunk_len - 1] == '\n';
+    tokenizer().tokenize(ts, line, linenumber);
+    if (line_end) ++linenumber;
     if ((int64_t)ts.size() > longest * 100) {
       int erasing = (int)ts.size() - (int)longest - 1;
       if (erasing > 0) {
