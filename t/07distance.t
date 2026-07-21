@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: SUSE LLC
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# distance() is a token-level Levenshtein over normalize() output. Self-contained: a pinned value on
+# distance() is a *compatibility* token distance over normalize() output - deliberately NOT strict
+# Levenshtein: it reproduces the previous engine's off-by-one (see the note in Cavil::Matcher's POD), so
+# do not "fix" it toward true Levenshtein without breaking byte-parity. Self-contained: a pinned value on
 # the fixtures, identity, and robustness on degenerate input.
 use strict;
 use warnings;

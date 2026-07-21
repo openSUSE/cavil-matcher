@@ -127,7 +127,7 @@ std::vector<ResolvedMatch> Matcher::find_matches(const std::string& path) {
   for (const Segment* s : segs)
     if (s->longest_span() > span) span = s->longest_span();
 
-  FILE* input = fopen(path.c_str(), "r");
+  FILE* input = fopen(path.c_str(), "rb");    // raw bytes: no CRLF/^Z translation (matters off-Linux)
   if (!input) return result;
 
   std::vector<RawMatch> ms;

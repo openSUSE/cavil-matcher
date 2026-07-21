@@ -253,23 +253,31 @@ uint32_t Segment::find_child(uint32_t node, uint64_t hash) const {
   return SEG_NONE;
 }
 
-// Per-start work budget. A pattern may contain $SKIP wildcards, and each skip node fans out up to its
-// width, so a pathological (or adversarially targeted) pattern could recurse combinatorially. Real
-// patterns and files stay many orders of magnitude below this cap - the developer differential over the
-// full corpus would fail if the budget ever truncated a genuine match - so this only ever bounds a
-// crafted fan-out, keeping a scan of hostile input responsive instead of hanging.
+// Per-start cap on the number of DISTINCT (node, offset) states explored. With memoization the scan is
+// already polynomial, so this is not the correctness boundary - it is only a memory backstop for a crafted
+// mega-segment whose state space is huge. Real patterns (even the corpus's most skip-heavy, ~31 skips)
+// stay many orders of magnitude below it, and the developer differential over the full corpus would fail
+// if it ever truncated a genuine match.
 static const long SKIP_WORK_BUDGET = 5000000;
 
 void Segment::check_token_matches(const TokenList& tokens, std::vector<RawMatch>& ms, int tokenlist_offset,
-                                  int tokenlist_index, unsigned int offset, uint32_t node, long& budget) const {
+                                  int tokenlist_index, unsigned int offset, uint32_t node,
+                                  std::unordered_set<uint64_t>& visited, long& budget) const {
   // Only bail when offset is *past* EOF (a skip that overshot the last token): the loop's own
   // offset==size branch must still run so a pattern whose terminal node sits exactly at EOF is reported
   // - e.g. a single-token pattern that is the final token of the file. (This fixes a missed match the
   // previous engine had, where the guard used >= and returned before checking the terminal node.)
   if (offset > tokens.size()) return;
-  if (--budget < 0) return;    // work budget exhausted; stop exploring (adversarial skip fan-out guard)
 
   while (node != SEG_NONE) {
+    // Memoize this state. Several $SKIP paths can converge on the same (node, offset); without dedup that
+    // is exponential (a pattern with N skips of width W explores up to W^N paths), which a raw visit
+    // budget would truncate - silently dropping a legitimate skip-heavy match. Exploring each state once
+    // is polynomial AND complete, so nothing is dropped. The budget below now counts distinct states.
+    uint64_t key = ((uint64_t)node << 32) | offset;
+    if (!visited.insert(key).second) return;
+    if (--budget < 0) return;    // distinct-state cap (memory backstop; unreachable for real patterns)
+
     if (offset >= tokens.size()) {
       uint32_t pid = _nodes[node].pid;
       if (pid) {
@@ -288,7 +296,8 @@ void Segment::check_token_matches(const TokenList& tokens, std::vector<RawMatch>
     for (uint32_t s = 0; s < n.skip_len; ++s) {
       const FlatSkip& sk = _skips[n.skip_start + s];
       for (int i = 1; i <= sk.skip_value; ++i)
-        check_token_matches(tokens, ms, tokenlist_offset, tokenlist_index, offset + i, sk.child_node, budget);
+        check_token_matches(tokens, ms, tokenlist_offset, tokenlist_index, offset + i, sk.child_node, visited,
+                            budget);
     }
 
     if (n.pid) {
@@ -312,6 +321,7 @@ void Segment::find_tokens(const TokenList& tokens, std::vector<RawMatch>& ms, in
   if (index < 0 || (size_t)index >= tokens.size()) return;
   uint32_t start = find_child(0, tokens[index].hash);
   if (start == SEG_NONE) return;
-  long budget = SKIP_WORK_BUDGET;    // fresh per-start budget; real matches never approach it
-  check_token_matches(tokens, ms, tokenlist_offset, index, (unsigned int)index + 1, start, budget);
+  std::unordered_set<uint64_t> visited;              // fresh per-start memo of explored (node, offset) states
+  long                         budget = SKIP_WORK_BUDGET;
+  check_token_matches(tokens, ms, tokenlist_offset, index, (unsigned int)index + 1, start, visited, budget);
 }

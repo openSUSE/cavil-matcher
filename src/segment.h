@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 // One raw (pre-resolution) match: absolute token start, number of tokens matched, the pattern id, and
@@ -120,10 +121,13 @@ public:
   void find_tokens(const TokenList& tokens, std::vector<RawMatch>& ms, int tokenlist_offset, int index) const;
 
 private:
-  // `budget` is a per-start work counter decremented on every visit; scanning stops exploring once it
-  // is exhausted, bounding worst-case CPU from adversarial skip fan-out (see check_token_matches).
+  // `visited` memoizes the (node, offset) states already explored for this start, so repeated $SKIP paths
+  // collapse instead of fanning out exponentially - every reachable state is still explored, so no
+  // legitimate match is dropped. `budget` then bounds the number of DISTINCT states (a memory backstop for
+  // a crafted mega-segment; real patterns stay far below it). See check_token_matches.
   void check_token_matches(const TokenList& tokens, std::vector<RawMatch>& ms, int tokenlist_offset,
-                           int tokenlist_index, unsigned int offset, uint32_t node, long& budget) const;
+                           int tokenlist_index, unsigned int offset, uint32_t node,
+                           std::unordered_set<uint64_t>& visited, long& budget) const;
   uint32_t find_child(uint32_t node, uint64_t hash) const;
 
   std::vector<char>   _owned;

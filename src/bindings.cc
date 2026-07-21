@@ -130,7 +130,7 @@ int pattern_distance(AV* a1, AV* a2) {
 AV* pattern_read_lines(const char* filename, HV* needed_lines) {
   dTHX;
   AV*   ret   = newAV();
-  FILE* input = fopen(filename, "r");
+  FILE* input = fopen(filename, "rb");    // raw bytes: no CRLF/^Z translation (matters off-Linux)
   if (!input) return ret;
 
   const size_t MAX_LINE_BYTES = 1 << 20;    // at most 1 MiB of text returned per line
