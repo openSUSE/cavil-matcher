@@ -283,4 +283,39 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   cmp_deeply($e->find_matches($f), [[1, 1, 1]], 'a rejected malformed pattern does not disturb valid ones');
 }
 
+# --- load() preserves the current matcher when the new segment fails to load ----------------------
+# load() replaces all state with one segment file, but only on success: a missing/corrupt file must
+# leave the existing matcher usable (swap-on-success, like Bag::load), not silently empty it.
+{
+  my $good_seg = "$dir/loadgood.seg";
+  my $builder  = Cavil::Matcher::init_matcher();
+  $builder->add_pattern(1, Cavil::Matcher::parse_tokens('permission is hereby granted'));
+  ok($builder->dump($good_seg), 'built a good segment to load');
+
+  my $probe = "$dir/loadprobe";
+  open my $pf, '>:raw', $probe or die $!;
+  print {$pf} "permission is hereby granted\n";
+  close $pf;
+
+  my $e = Cavil::Matcher::init_matcher();
+  ok($e->load($good_seg), 'load a good segment');
+  cmp_deeply($e->find_matches($probe), [[1, 1, 1]], 'the loaded segment matches');
+
+  # A corrupt segment (flipped payload byte -> CRC failure) fails to load...
+  my $bad_bytes = slurp($good_seg);
+  substr($bad_bytes, length($bad_bytes) - 1, 1) = chr(ord(substr($bad_bytes, length($bad_bytes) - 1, 1)) ^ 0xFF);
+  my $bad_seg = "$dir/loadbad.seg";
+  open my $bf, '>:raw', $bad_seg or die $!;
+  print {$bf} $bad_bytes;
+  close $bf;
+  is($e->load($bad_seg), 0, 'loading a corrupt segment fails');
+
+  # ...and the previously-loaded segment is still usable, not silently emptied.
+  cmp_deeply($e->find_matches($probe), [[1, 1, 1]], 'the working matcher survives a failed load');
+
+  # A missing file likewise fails without destroying state.
+  is($e->load("$dir/does-not-exist.seg"), 0, 'loading a missing file fails');
+  cmp_deeply($e->find_matches($probe), [[1, 1, 1]], 'the working matcher survives a missing-file load');
+}
+
 done_testing();

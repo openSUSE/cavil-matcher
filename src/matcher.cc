@@ -80,8 +80,19 @@ bool Matcher::dump(const std::string& path) {
 }
 
 bool Matcher::load(const std::string& path) {
+  // Replace all state with this one segment, but only once it has fully validated - map and open into
+  // locals first, and clear/adopt only on success. A missing/corrupt/invalid file therefore leaves the
+  // current matcher usable rather than silently emptying it (matching Bag::load, and safe for a
+  // long-running process that hot-swaps indexes past a transient bad file).
+  auto mf = std::make_unique<MappedFile>();
+  if (!mf->map(path)) return false;
+  auto seg = std::make_unique<Segment>();
+  if (!seg->open(mf->data(), mf->size())) return false;
+
   clear();
-  return attach(path);
+  _maps.push_back(std::move(mf));
+  _segments.push_back(std::move(seg));
+  return true;
 }
 
 void Matcher::collect_active(std::vector<const Segment*>& out) {
