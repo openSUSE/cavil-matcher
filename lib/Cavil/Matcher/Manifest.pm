@@ -19,6 +19,12 @@ use Carp 'croak';
 
 use constant FORMAT_VERSION => 1;
 
+# Cap the generation counter at the largest exactly-representable integer (2**53 - 1). A corrupt or
+# hand-edited manifest could carry an enormous "generation"; coercing that with 0 + $gen would lose
+# precision (it becomes a float), and the next bump would then derive nonsense segment filenames. Any
+# real generation is astronomically below this, so an over-large value is treated as corrupt (reset to 0).
+use constant MAX_GENERATION => 9_007_199_254_740_991;
+
 sub new ($class, %args) {
   croak 'dir required' unless defined $args{dir};
   my $dir  = $args{dir};
@@ -47,7 +53,7 @@ sub _read ($self) {
   # never make a reader (matcher()) die. Anything malformed is dropped, so the index degrades to the
   # entries that are still well-formed rather than crashing.
   my $gen = $data->{generation};
-  $data->{generation} = (defined $gen && !ref $gen && $gen =~ /^\d+$/) ? 0 + $gen : 0;
+  $data->{generation} = (defined $gen && !ref $gen && $gen =~ /^[0-9]+$/ && $gen <= MAX_GENERATION) ? 0 + $gen : 0;
   $data->{segments}   = _clean_segments($data->{segments});
   $data->{tombstones} = _clean_tombstones($data->{tombstones});
   return $data;

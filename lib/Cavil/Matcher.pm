@@ -153,9 +153,11 @@ invalid file.
 
 Drop these pattern ids from results before overlap resolution.
 
-=item set_generation($n)
+=item set_generation($n) / generation
 
-Record the manifest generation this engine was built from (for reproducibility).
+Record, and read back, the manifest generation this engine was built from. Reading it back from the engine
+itself (rather than re-reading the index) is race-free, so a report can record exactly the generation it
+scanned with even if the index is updated concurrently.
 
 =back
 

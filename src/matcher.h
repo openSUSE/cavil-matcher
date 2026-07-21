@@ -52,8 +52,9 @@ public:
   // Segmented surface used by the Perl manifest layer.
   bool attach(const std::string& path);                       // add one mmapped segment to the active set
   void set_tombstones(const std::vector<uint32_t>& ids);      // pattern ids to drop before resolution
-  void set_generation(uint64_t g) { _generation = g; }
-  void clear();
+  void     set_generation(uint64_t g) { _generation = g; }
+  uint64_t generation() const { return _generation; }    // the generation this engine was pinned to
+  void     clear();
 
 private:
   void collect_active(std::vector<const Segment*>& out);      // ensures the delta is compiled

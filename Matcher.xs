@@ -99,6 +99,12 @@ void set_generation(Cavil::Matcher::Engine self, UV generation)
   CODE:
     matcher_set_generation(self, generation);
 
+UV generation(Cavil::Matcher::Engine self)
+  CODE:
+    RETVAL = matcher_generation(self);
+  OUTPUT:
+    RETVAL
+
 void DESTROY(Cavil::Matcher::Engine self)
   CODE:
     destroy_matcher(self);

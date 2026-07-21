@@ -280,6 +280,7 @@ void matcher_set_tombstones(Matcher* m, AV* ids) {
 }
 
 void matcher_set_generation(Matcher* m, UV generation) { m->set_generation((uint64_t)generation); }
+UV   matcher_generation(Matcher* m) { return (UV)m->generation(); }
 
 // ---------------------------------------------------------------------------
 // Bag

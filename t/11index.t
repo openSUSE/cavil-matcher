@@ -85,6 +85,10 @@ is(scalar @{$idx->_manifest->segments}, 1, 'manifest holds only the base after m
 like($idx->_manifest->segments->[0]{file}, qr/^base-/, 'the sole active segment is the base');
 is(scalar @{$idx->_manifest->tombstones}, 0, 'tombstones cleared after merge');
 
+# The engine exposes the generation it was pinned to, race-free (no re-read of the index needed), so a
+# report can record exactly the generation it scanned with.
+is($idx->matcher->generation, $g4, 'the built engine reports its pinned generation');
+
 # Deferred deletion: the retired delta files stay on disk one more cycle so a reader that read the old
 # manifest can still mmap them (readers do not lock); the next merge collects them. (The next-merge
 # collection itself is covered in t/14coverage.t.)

@@ -37,6 +37,7 @@ int      matcher_load(Matcher* m, const char* filename);
 int      matcher_attach(Matcher* m, const char* filename);
 void     matcher_set_tombstones(Matcher* m, AV* ids);
 void     matcher_set_generation(Matcher* m, UV generation);
+UV       matcher_generation(Matcher* m);
 
 // Bag
 Bag* pattern_init_bag();

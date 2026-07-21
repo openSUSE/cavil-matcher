@@ -196,6 +196,11 @@ is_deeply(
 write_manifest('{"format_version":1,"generation":{"x":1}}');
 is(Cavil::Matcher::Manifest->new(dir => $d6)->generation, 0, 'non-scalar generation sanitized to 0');
 
+# An over-large generation (beyond exact integer representation) is treated as corrupt and reset, so the
+# next mutation cannot lose precision and derive a garbage segment filename.
+write_manifest('{"format_version":1,"generation":"999999999999999999999999"}');
+is(Cavil::Matcher::Manifest->new(dir => $d6)->generation, 0, 'an over-large generation is reset to 0');
+
 # And the reader (matcher) must not die on it - it degrades to the well-formed (here: missing) segments.
 my $bad_idx = Cavil::Matcher::Index->new(dir => $d6);
 my $eng     = eval { $bad_idx->matcher(quiet => 1) };
