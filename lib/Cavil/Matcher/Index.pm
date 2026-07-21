@@ -73,7 +73,14 @@ sub add_segment ($self, $patterns) {
   my $file = sprintf('seg-%010d.seg', $gen);
   $self->_compile_segment($patterns, $gen, $file) or croak "failed to compile segment $file";
   my $path = File::Spec->catfile($self->{dir}, $file);
-  $man->add_segment(file => $file, checksum => _checksum($path), pattern_count => scalar @$patterns);
+
+  # Fail closed: we just wrote this segment, so we must be able to checksum it. An empty result means the
+  # file could not be read back (transient I/O or permissions) - store no entry rather than one that
+  # silently opts out of the manifest-level integrity check. (An empty checksum in a *read* manifest is
+  # still honoured for backward compatibility; only fresh writes are strict.)
+  my $checksum = _checksum($path);
+  croak "failed to checksum new segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
+  $man->add_segment(file => $file, checksum => $checksum, pattern_count => scalar @$patterns);
   $man->save;
   return $gen;
 }
@@ -99,8 +106,13 @@ sub merge ($self, $patterns) {
   $self->_compile_segment($patterns // [], $gen, $file) or croak "failed to compile base segment $file";
   my $path = File::Spec->catfile($self->{dir}, $file);
 
+  # Fail closed on a fresh write, as in add_segment: a base we just wrote but cannot checksum must not
+  # be recorded with an integrity-check-disabling empty checksum.
+  my $checksum = _checksum($path);
+  croak "failed to checksum new base segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
+
   my @old = map { $_->{file} } @{$man->segments};
-  $man->set_segments({file => $file, checksum => _checksum($path), pattern_count => scalar @{$patterns // []}});
+  $man->set_segments({file => $file, checksum => $checksum, pattern_count => scalar @{$patterns // []}});
   $man->clear_tombstones;
   $man->save;
 

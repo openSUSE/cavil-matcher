@@ -122,7 +122,9 @@ int pattern_distance(AV* a1, AV* a2) {
 // the two always agree on numbering (which is what snippet extraction relies on). A physical line longer
 // than the read buffer arrives in several chunks sharing one line number; for a requested line we
 // accumulate all of them so the returned text is the whole line - capped so a pathological single line
-// cannot exhaust memory. Reads themselves stay bounded (fixed-size chunks).
+// cannot exhaust memory. Reads themselves stay bounded (fixed-size chunks). The trailing newline is
+// detected from the exact byte count fgets consumed (the stream-position delta), not strlen(), which
+// would stop at an embedded NUL and mis-number every following line on NUL-bearing input.
 AV* pattern_read_lines(const char* filename, HV* needed_lines) {
   dTHX;
   AV*   ret   = newAV();
@@ -148,8 +150,11 @@ AV* pattern_read_lines(const char* filename, HV* needed_lines) {
     av_push(ret, newRV_noinc((SV*)row));
   };
 
+  long pos = ftell(input);
   while (fgets(line, sizeof(line) - 1, input)) {
-    size_t l        = strlen(line);
+    long   npos     = ftell(input);
+    size_t l        = (pos >= 0 && npos >= pos) ? (size_t)(npos - pos) : strlen(line);
+    pos             = npos;
     bool   line_end = l > 0 && line[l - 1] == '\n';
     size_t body     = line_end ? l - 1 : l;    // this chunk's bytes, excluding a trailing newline
 

@@ -125,9 +125,16 @@ std::vector<ResolvedMatch> Matcher::find_matches(const std::string& path) {
   // line share one (correct) number. Memory stays bounded - we keep reading fixed-size chunks rather
   // than slurping whole lines, so a pathological single line cannot exhaust memory. (This intentionally
   // differs from the previous engine, which counted chunks; it fixes wrong line numbers on long lines.)
+  //
+  // The trailing newline is detected from the exact number of bytes fgets consumed (the stream-position
+  // delta), not strlen(): strlen() stops at the first embedded NUL, so a NUL before the newline would
+  // hide it and mis-number every following line on binary/NUL-bearing input.
+  long pos = ftell(input);
   while (fgets(line, sizeof(line) - 1, input)) {
-    size_t chunk_len = strlen(line);
-    bool   line_end  = chunk_len > 0 && line[chunk_len - 1] == '\n';
+    long   npos     = ftell(input);
+    size_t got      = (pos >= 0 && npos >= pos) ? (size_t)(npos - pos) : strlen(line);
+    pos             = npos;
+    bool   line_end = got > 0 && line[got - 1] == '\n';
     tokenizer().tokenize(ts, line, linenumber);
     if (line_end) ++linenumber;
     if ((int64_t)ts.size() > longest * 100) {

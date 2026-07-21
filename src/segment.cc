@@ -162,6 +162,17 @@ bool Segment::open(const char* data, size_t len) {
 
   if (cavil_crc32(data + sizeof(SegmentHeader), total - sizeof(SegmentHeader)) != h->payload_crc32) return false;
 
+  // Semantic header invariants. The CRC only proves the bytes are the ones the writer produced; it does
+  // not prove a *malicious or buggy* writer produced sane values. These fields steer the scan (notably
+  // longest_pattern, which sizes find_matches' sliding window), so validate them before trusting them:
+  //   - unknown flags/reserved bits must be zero (forward-compat + no silently-honoured feature),
+  //   - longest_pattern must fit the tree: a pattern of L tokens occupies L nodes below the root, so
+  //     0 <= longest_pattern <= node_count - 1 (this also keeps longest * 100 far from int64 overflow),
+  //   - pattern_count cannot exceed the number of nodes (each pattern ends at a distinct node).
+  if (h->flags != 0 || h->reserved != 0) return false;
+  if (h->longest_pattern < 0 || (uint64_t)h->longest_pattern >= h->node_count) return false;
+  if (h->pattern_count > h->node_count) return false;
+
   const FlatNode*  nodes    = reinterpret_cast<const FlatNode*>(data + sizeof(SegmentHeader));
   const FlatChild* children = reinterpret_cast<const FlatChild*>(data + sizeof(SegmentHeader) + nodes_bytes);
   const FlatSkip*  skips = reinterpret_cast<const FlatSkip*>(data + sizeof(SegmentHeader) + nodes_bytes + child_bytes);
@@ -177,7 +188,11 @@ bool Segment::open(const char* data, size_t len) {
       if (c > 0 && !(children[n.child_start + c - 1].hash < fc.hash)) return false;    // must be sorted asc
     }
     for (uint32_t s = 0; s < n.skip_len; ++s) {
-      if (skips[n.skip_start + s].child_node >= h->node_count) return false;
+      const FlatSkip& fs = skips[n.skip_start + s];
+      if (fs.child_node >= h->node_count) return false;
+      // A skip width outside 1..MAX_SKIP is not something the compiler can emit; reject it so a crafted
+      // segment cannot widen the per-skip fan-out beyond the documented bound.
+      if (fs.skip_value < 1 || fs.skip_value > MAX_SKIP) return false;
     }
   }
 

@@ -137,13 +137,20 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   close $a;
   cmp_deeply($nulm->find_matches($after_nul), [], 'text after a NUL on the same line is not matched');
 
+  # A NUL *before* the newline must not hide the newline: strlen()-based detection would stop at the NUL
+  # and mis-number every following line. The match below is physically on line 2 and must be reported
+  # there (not line 1), and read_lines must agree.
   my $next_line = "$dir/next_line";
   open my $b, '>:raw', $next_line or die $!;
   print {$b} "prefix\0junk\npermission is hereby granted\n";
   close $b;
-  my $m = $nulm->find_matches($next_line);
-  is(scalar @$m, 1, 'the same text on a later line is matched normally');
-  is($m->[0][0], 1, 'matched the expected pattern on the post-NUL line');
+  cmp_deeply(
+    $nulm->find_matches($next_line),
+    [[1, 2, 2]],
+    'a NUL before the newline does not corrupt the next line number (match is on line 2)'
+  );
+  my $nul_rl = Cavil::Matcher::read_lines($next_line, {2 => 1});
+  is($nul_rl->[0][0], 2, 'read_lines agrees the post-NUL match is on line 2');
 }
 
 # --- Chunk-as-line contract for very long physical lines (pinned) --------------------------------
