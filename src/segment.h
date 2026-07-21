@@ -113,8 +113,10 @@ public:
   void find_tokens(const TokenList& tokens, std::vector<RawMatch>& ms, int tokenlist_offset, int index) const;
 
 private:
+  // `budget` is a per-start work counter decremented on every visit; scanning stops exploring once it
+  // is exhausted, bounding worst-case CPU from adversarial skip fan-out (see check_token_matches).
   void check_token_matches(const TokenList& tokens, std::vector<RawMatch>& ms, int tokenlist_offset,
-                           int tokenlist_index, unsigned int offset, uint32_t node) const;
+                           int tokenlist_index, unsigned int offset, uint32_t node, long& budget) const;
   uint32_t find_child(uint32_t node, uint64_t hash) const;
 
   std::vector<char>   _owned;

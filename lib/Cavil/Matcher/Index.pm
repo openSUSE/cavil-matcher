@@ -126,7 +126,10 @@ sub matcher ($self, %opts) {
       warn "cavil-matcher: segment $seg->{file} missing; skipping\n" unless $opts{quiet};
       next;
     }
-    if (defined $seg->{checksum} && length $seg->{checksum} && _checksum($path) ne $seg->{checksum}) {
+
+    # An empty checksum means "skip the integrity check" (older manifests, or entries written without
+    # one); the manifest reader guarantees this field is always a defined string, so no undef check.
+    if (length $seg->{checksum} && _checksum($path) ne $seg->{checksum}) {
       warn "cavil-matcher: segment $seg->{file} checksum mismatch; skipping\n" unless $opts{quiet};
       next;
     }

@@ -68,6 +68,19 @@ AV* pattern_normalize(const char* p) {
   return ret;
 }
 
+// Safely extract a token hash (element index 2) from a normalize()-style row. distance() is public, so
+// it must not crash even when handed arrays that are not normalize() output (plain scalars, wrong shape,
+// sparse). Anything malformed contributes hash 0. On valid input this is identical to a direct deref, so
+// distance() stays bit-identical to the previous engine (see xt/differential.t).
+static UV elem_hash(pTHX_ AV* arr, int i) {
+  SV** e = av_fetch(arr, i, 0);
+  if (!e || !*e || !SvROK(*e)) return 0;
+  SV* rv = SvRV(*e);
+  if (SvTYPE(rv) != SVt_PVAV) return 0;
+  SV** h = av_fetch((AV*)rv, 2, 0);
+  return (h && *h) ? SvUV(*h) : 0;
+}
+
 static int levenshtein(AV* s, int len_s, AV* t, int len_t) {
   dTHX;
   // Guard degenerate/empty inputs: av_len returns -1 for an empty array, which would otherwise index
@@ -77,17 +90,17 @@ static int levenshtein(AV* s, int len_s, AV* t, int len_t) {
   if (len_s == 0) return len_t;
   if (len_t == 0) return len_s;
 
+  std::vector<UV> hs(len_s), ht(len_t);
+  for (int i = 0; i < len_s; ++i) hs[i] = elem_hash(aTHX_ s, i);
+  for (int j = 0; j < len_t; ++j) ht[j] = elem_hash(aTHX_ t, j);
+
   std::vector<int64_t> v0(len_t + 1), v1(len_t + 1);
   for (int i = 0; i < len_t + 1; ++i) v0[i] = i;
 
   for (int i = 0; i < len_s; ++i) {
-    v1[0]    = i + 1;
-    AV* av1  = (AV*)SvRV(*av_fetch(s, i, 0));
-    SV* sv1  = *av_fetch(av1, 2, 0);
+    v1[0] = i + 1;
     for (int j = 0; j < len_t; ++j) {
-      AV* av2  = (AV*)SvRV(*av_fetch(t, j, 0));
-      SV* sv2  = *av_fetch(av2, 2, 0);
-      int cost = (SvUV(sv1) == SvUV(sv2)) ? 0 : 1;
+      int cost  = (hs[i] == ht[j]) ? 0 : 1;
       v1[j + 1] = std::min(std::min(v1[j] + 1, v0[j + 1] + 1), v0[j] + cost);
     }
     for (int j = 0; j < len_t + 1; ++j) v0[j] = v1[j];

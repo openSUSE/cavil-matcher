@@ -42,10 +42,45 @@ sub _read ($self) {
   };
   my $data = eval { Cpanel::JSON::XS->new->decode($json) };
   return _default() unless ref $data eq 'HASH' && ($data->{format_version} // 0) == FORMAT_VERSION;
-  $data->{generation} = 0  unless defined $data->{generation};
-  $data->{segments}   = [] unless ref $data->{segments} eq 'ARRAY';
-  $data->{tombstones} = [] unless ref $data->{tombstones} eq 'ARRAY';
+
+  # Sanitize every field: a manifest is trusted local state, but a corrupt or hand-edited one must
+  # never make a reader (matcher()) die. Anything malformed is dropped, so the index degrades to the
+  # entries that are still well-formed rather than crashing.
+  my $gen = $data->{generation};
+  $data->{generation} = (defined $gen && !ref $gen && $gen =~ /^\d+$/) ? 0 + $gen : 0;
+  $data->{segments}   = _clean_segments($data->{segments});
+  $data->{tombstones} = _clean_tombstones($data->{tombstones});
   return $data;
+}
+
+# A safe segment filename is a plain basename living inside the index directory: defined, a non-ref
+# scalar, with no path separators or ".." traversal components.
+sub _safe_name ($name) {
+  return 0 unless defined $name && !ref $name && length $name;
+  return 0 if $name =~ m{[/\\]} || $name =~ /\.\./;
+  return 1;
+}
+
+sub _clean_segments ($segments) {
+  return [] unless ref $segments eq 'ARRAY';
+  my @clean;
+  for my $seg (@$segments) {
+    next unless ref $seg eq 'HASH' && _safe_name($seg->{file});
+    my $checksum = $seg->{checksum};
+    my $count    = $seg->{pattern_count};
+    push @clean,
+      {
+      file          => $seg->{file},
+      checksum      => (defined $checksum && !ref $checksum) ? "$checksum" : '',
+      pattern_count => (defined $count    && !ref $count && $count =~ /^\d+$/) ? 0 + $count : 0
+      };
+  }
+  return \@clean;
+}
+
+sub _clean_tombstones ($tombstones) {
+  return [] unless ref $tombstones eq 'ARRAY';
+  return [grep { defined && !ref } @$tombstones];
 }
 
 sub data       ($self) { $self->{data} }

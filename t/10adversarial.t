@@ -75,5 +75,22 @@ ok(ref($bag->best_for(join('', map { chr(int(rand(256))) } 1 .. 3000), 3)) eq 'A
   'bag->best_for survives hostile input');
 ok(ref($bag->best_for('', 3)) eq 'ARRAY', 'bag->best_for survives empty input');
 
+# --- Skip fan-out DoS backstop -------------------------------------------------------------------
+# A pattern with several wide $SKIP wildcards can fan out combinatorially against a crafted file. A
+# rare first anchor ("startmarker") means only one start position enters the deep walk, and the file
+# feeds every skip offset with the continuation token - so without the per-start work budget this
+# would run ~99^4 steps and effectively hang. The budget must bound it and return promptly.
+{
+  my $sm = Cavil::Matcher::init_matcher;
+  $sm->add_pattern(1, Cavil::Matcher::parse_tokens('startmarker $SKIP99 xx $SKIP99 xx $SKIP99 xx $SKIP99 xx'));
+  my $f     = write_file('skip_fanout', 'startmarker ' . ('xx ' x 450));
+  my $start = time;
+  my $res   = $sm->find_matches($f);
+  my $secs  = time - $start;
+  unlink $f;
+  ok(ref $res eq 'ARRAY', 'skip-heavy pattern returns instead of hanging');
+  cmp_ok($secs, '<', 20, 'skip fan-out is bounded by the work budget');
+}
+
 pass('reached end without crashing');
 done_testing();

@@ -156,4 +156,46 @@ $mm->add_tombstones(1, 2, 3);
 $mm->add_tombstones(2, 3, 4);                            # duplicates ignored
 is_deeply([sort { $a <=> $b } @{$mm->tombstones}], [1, 2, 3, 4], 'tombstone ids de-duplicated');
 
+# A structurally-malformed manifest (non-hash segments, unsafe/traversal filenames, ref checksums,
+# bad pattern_count, non-integer generation, non-scalar tombstones) must be sanitized, not fatal.
+write_manifest(<<'JSON');
+{"format_version":1,"generation":"not-a-number",
+ "segments":["a-string-not-a-hash",
+             {"file":"../evil.seg"},
+             {"file":"sub/dir.seg"},
+             {"file":null},
+             {"file":[]},
+             {"file":""},
+             {"file":"a..b.seg"},
+             {"file":"weird.seg","checksum":{"x":1},"pattern_count":"nan"},
+             {"file":"good-seg.seg","checksum":"abc","pattern_count":"5"},
+             {"file":"bare.seg"},
+             {"file":"countref.seg","pattern_count":{}}],
+ "tombstones":[1,2,{"x":1},null,"7"]}
+JSON
+my $bad = Cavil::Matcher::Manifest->new(dir => $d6);
+is($bad->generation,         0, 'non-integer generation sanitized to 0');
+is(scalar @{$bad->segments}, 4, 'only safe, well-formed segment entries survive');
+is_deeply(
+  $bad->segments,
+  [
+    {file => 'weird.seg',    checksum => '',    pattern_count => 0},
+    {file => 'good-seg.seg', checksum => 'abc', pattern_count => 5},
+    {file => 'bare.seg',     checksum => '',    pattern_count => 0},
+    {file => 'countref.seg', checksum => '',    pattern_count => 0}
+  ],
+  'segment fields coerced (ref/empty/traversal names dropped; ref checksum -> "", bad count -> 0)'
+);
+is_deeply([@{$bad->tombstones}], [1, 2, '7'], 'non-scalar tombstone ids dropped');
+
+# Generation given as a non-scalar is also sanitized rather than fatal.
+write_manifest('{"format_version":1,"generation":{"x":1}}');
+is(Cavil::Matcher::Manifest->new(dir => $d6)->generation, 0, 'non-scalar generation sanitized to 0');
+
+# And the reader (matcher) must not die on it - it degrades to the well-formed (here: missing) segments.
+my $bad_idx = Cavil::Matcher::Index->new(dir => $d6);
+my $eng     = eval { $bad_idx->matcher(quiet => 1) };
+ok(!$@, 'matcher() survives a malformed manifest');
+cmp_deeply($eng->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'malformed-manifest index finds nothing');
+
 done_testing();

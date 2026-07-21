@@ -200,9 +200,17 @@ uint32_t Segment::find_child(uint32_t node, uint64_t hash) const {
   return SEG_NONE;
 }
 
+// Per-start work budget. A pattern may contain $SKIP wildcards, and each skip node fans out up to its
+// width, so a pathological (or adversarially targeted) pattern could recurse combinatorially. Real
+// patterns and files stay many orders of magnitude below this cap - the developer differential over the
+// full corpus would fail if the budget ever truncated a genuine match - so this only ever bounds a
+// crafted fan-out, keeping a scan of hostile input responsive instead of hanging.
+static const long SKIP_WORK_BUDGET = 5000000;
+
 void Segment::check_token_matches(const TokenList& tokens, std::vector<RawMatch>& ms, int tokenlist_offset,
-                                  int tokenlist_index, unsigned int offset, uint32_t node) const {
+                                  int tokenlist_index, unsigned int offset, uint32_t node, long& budget) const {
   if (offset >= tokens.size()) return;
+  if (--budget < 0) return;    // work budget exhausted; stop exploring (adversarial skip fan-out guard)
 
   while (node != SEG_NONE) {
     if (offset >= tokens.size()) {
@@ -223,7 +231,7 @@ void Segment::check_token_matches(const TokenList& tokens, std::vector<RawMatch>
     for (uint32_t s = 0; s < n.skip_len; ++s) {
       const FlatSkip& sk = _skips[n.skip_start + s];
       for (int i = 1; i <= sk.skip_value; ++i)
-        check_token_matches(tokens, ms, tokenlist_offset, tokenlist_index, offset + i, sk.child_node);
+        check_token_matches(tokens, ms, tokenlist_offset, tokenlist_index, offset + i, sk.child_node, budget);
     }
 
     if (n.pid) {
@@ -247,5 +255,6 @@ void Segment::find_tokens(const TokenList& tokens, std::vector<RawMatch>& ms, in
   if (index < 0 || (size_t)index >= tokens.size()) return;
   uint32_t start = find_child(0, tokens[index].hash);
   if (start == SEG_NONE) return;
-  check_token_matches(tokens, ms, tokenlist_offset, index, (unsigned int)index + 1, start);
+  long budget = SKIP_WORK_BUDGET;    // fresh per-start budget; real matches never approach it
+  check_token_matches(tokens, ms, tokenlist_offset, index, (unsigned int)index + 1, start, budget);
 }
