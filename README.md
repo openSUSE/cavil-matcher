@@ -15,6 +15,9 @@ rebuilds everything around it so the engine scales operationally:
 - **One shared copy per host.** Segments are memory-mapped read-only and queried in place, so a fleet of
   index workers shares a single physical copy instead of each loading its own — attaching a 50 MB index to
   25 workers costs kilobytes of private memory, not gigabytes.
+- **Resolving many matches stays fast.** A file that produces a great many matches — keyword-heavy or highly
+  repetitive source — took time quadratic in the match count to resolve in the previous engine; here that
+  step is near-linear, for identical results.
 - **A versioned, checksummed on-disk format** with a fully validated reader: a corrupt or hostile segment is
   rejected, never mis-read.
 - **Rock-solid on any input.** Scanning a distribution means ingesting binaries, malware test corpora and
