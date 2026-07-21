@@ -226,5 +226,17 @@ is(scalar @{$ire->matcher(quiet => 1)->find_matches($tgt)}, 0, 'a tombstoned id 
 $ire->add_segment([[1, 'permission is hereby granted']]);    # re-introduce id 1
 is_deeply($ire->_manifest->tombstones, [], 're-adding an id clears its tombstone');
 cmp_ok(scalar @{$ire->matcher(quiet => 1)->find_matches($tgt)}, '>', 0, 'the re-added id matches again');
+ok(-e File::Spec->catfile($dre, '.lock'), 'a mutation takes (and leaves) the per-index advisory lock file');
+
+# --- save() cleans up its temp file on a failed write --------------------------------------------
+# Force the rename to fail by making manifest.json a directory; save must remove its manifest.json.tmp.<pid>
+# rather than leaving litter, and still report the error.
+my $dsv = tempdir(CLEANUP => 1);
+mkdir "$dsv/manifest.json" or die $!;                        # rename onto a directory fails
+my $sv = Cavil::Matcher::Manifest->new(dir => $dsv);
+$sv->add_segment(file => 'x.seg', checksum => 'abc');
+eval { $sv->save };
+like($@, qr/cannot rename manifest/, 'save croaks when the manifest cannot be written');
+is(scalar(my @leftover = glob "$dsv/manifest.json.tmp.*"), 0, 'no temp file is left behind after a failed save');
 
 done_testing();

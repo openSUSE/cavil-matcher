@@ -58,9 +58,14 @@ AV *read_lines(const char *filename, HV *needed)
 
 MODULE = Cavil::Matcher  PACKAGE = Cavil::Matcher::Engine
 
-void add_pattern(Cavil::Matcher::Engine self, unsigned int id, AV *tokens)
+void add_pattern(Cavil::Matcher::Engine self, UV id, AV *tokens)
   CODE:
-    matcher_add_pattern(self, id, tokens);
+    /* ids are stored as uint32_t natively; validate here (UV preserves the full width) so an
+       out-of-range id fails loudly instead of silently truncating to a different match identity.
+       0 is reserved as the "no pattern" sentinel on a tree node. */
+    if (id < 1 || id > 0xFFFFFFFFUL)
+      croak("Cavil::Matcher::add_pattern: id %" UVuf " out of range (must be 1..4294967295)", id);
+    matcher_add_pattern(self, (unsigned int)id, tokens);
 
 AV *find_matches(Cavil::Matcher::Engine self, const char *filename)
   CODE:

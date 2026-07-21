@@ -131,10 +131,21 @@ sub remove_tombstones ($self, @ids) {
 sub save ($self) {
   my $json = Cpanel::JSON::XS->new->canonical->pretty->encode($self->{data});
   my $tmp  = "$self->{file}.tmp.$$";
-  open my $fh, '>:raw', $tmp or croak "cannot write manifest: $!";     # uncoverable branch true (I/O error)
-  print {$fh} $json or croak "cannot write manifest: $!";              # uncoverable branch true (I/O error)
-  close $fh         or croak "cannot write manifest: $!";              # uncoverable branch true (I/O error)
-  rename $tmp, $self->{file} or croak "cannot rename manifest: $!";    # uncoverable branch true (I/O error)
+  my $ok   = eval {
+    open my $fh, '>:raw', $tmp or die "cannot write manifest: $!\n";    # uncoverable branch true (I/O error)
+    print {$fh} $json or die "cannot write manifest: $!\n";             # uncoverable branch true (I/O error)
+    close $fh         or die "cannot write manifest: $!\n";             # uncoverable branch true (I/O error)
+    rename $tmp, $self->{file} or die "cannot rename manifest: $!\n";
+    1;
+  };
+
+  # On any failure, remove the temp file so a broken write (e.g. rename onto a bad target, full disk)
+  # does not leave manifest.json.tmp.<pid> litter behind, then re-raise.
+  unless ($ok) {
+    my $err = $@;
+    unlink $tmp;
+    croak $err;
+  }
   return $self;
 }
 

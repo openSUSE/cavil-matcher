@@ -75,7 +75,8 @@ docs/Architecture.md           Design and rationale, in prose
 
 ## Testing
 
-`make test` runs the self-contained suite (no external engine required). The developer-only differential
+On a fresh checkout, generate the `Makefile` first: `perl Makefile.PL && make test`. Thereafter `make test`
+runs the self-contained suite (no external engine required). The developer-only differential
 tests in `xt/` cross-check byte-for-byte equivalence against `Spooky::Patterns::XS` while both engines
 coexist; run them with `prove -b xt/` (they skip if the old engine is not installed).
 

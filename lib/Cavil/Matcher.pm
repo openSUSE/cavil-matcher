@@ -72,11 +72,18 @@ Tokenize pattern text into the arrayref of token hashes that L</add_pattern> exp
 are recognised here: each matches from B<one> up to I<n> arbitrary words (at least one, at most I<n> - never
 a zero-word gap), with I<n> up to 99. A pattern may not begin or end with a skip.
 
+B<Input must be text.> This and L</normalize> take the string with C-string semantics, so an embedded NUL
+byte terminates the input (everything after it on that call is ignored). That is fine for their intended use
+- curated pattern text and human-readable text - and matches the previous engine. To scan raw source bytes
+(which may contain NULs), use L</add_pattern> + L</find_matches>, whose file reader is NUL-tolerant and reads
+past embedded NULs.
+
 =head2 normalize
 
   my $rows = Cavil::Matcher::normalize($text);   # [[line, token, hash], ...]
 
-Tokenize arbitrary text, returning each token with its line number and hash.
+Tokenize text, returning each token with its line number and hash. Text input only - see the NUL-handling
+note under L</parse_tokens>.
 
 =head2 distance
 

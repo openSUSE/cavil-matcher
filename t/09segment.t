@@ -241,4 +241,23 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   is(scalar @{$tm->find_matches($probe)}, 1, 'an out-of-range tombstone id does not suppress pattern 1');
 }
 
+# --- Pattern id range is enforced at the boundary (no silent 32-bit truncation) ------------------
+# An id outside 1..2^32-1 would truncate to a different value (2^32+1 -> 1) and produce wrong match
+# identities; add_pattern must reject it loudly. 0 is the reserved "no pattern" sentinel.
+{
+  my $e = Cavil::Matcher::init_matcher();
+  eval { $e->add_pattern(4294967297, Cavil::Matcher::parse_tokens('permission is hereby granted')) };
+  like($@, qr/out of range/, 'add_pattern croaks on an id above 2^32-1 instead of truncating');
+  eval { $e->add_pattern(0, Cavil::Matcher::parse_tokens('permission is hereby granted')) };
+  like($@, qr/out of range/, 'add_pattern croaks on id 0 (the no-pattern sentinel)');
+
+  # An in-range id still works.
+  $e->add_pattern(7, Cavil::Matcher::parse_tokens('permission is hereby granted'));
+  my $ok = "$dir/idok";
+  open my $fh, '>:raw', $ok or die $!;
+  print {$fh} "permission is hereby granted\n";
+  close $fh;
+  cmp_deeply($e->find_matches($ok), [[7, 1, 1]], 'an in-range id matches normally');
+}
+
 done_testing();

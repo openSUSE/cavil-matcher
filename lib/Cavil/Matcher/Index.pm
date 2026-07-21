@@ -10,12 +10,13 @@
 # The native engine (Cavil::Matcher::Engine) only walks and resolves; every decision about which
 # segments are active and which patterns are tombstoned is made here, in readable Perl.
 #
-# CONCURRENCY - SINGLE WRITER PRECONDITION. add_segment/tombstone/merge read the manifest, bump its
-# generation in memory, write generation-derived files, then save. The save itself is atomic for
-# readers (temp + rename in Manifest), but writers are NOT serialized: two processes starting from the
-# same generation can clobber each other's update (last writer wins). Callers MUST ensure a single
-# writer at a time - e.g. run all index mutations through one serialized job, or hold an advisory lock
-# around the whole read-modify-save. Concurrent readers (building a matcher) are always safe.
+# CONCURRENCY. add_segment/tombstone/merge read the manifest, bump its generation in memory, write
+# generation-derived files, then save. Each mutation runs under an exclusive advisory lock (flock on a
+# per-index lock file) held around the whole read-modify-save, so concurrent writers on the same host
+# serialize instead of clobbering each other's update (which, unlocked, would be last-writer-wins on a
+# shared generation-derived filename). The lock is advisory and host-local - which is the right scope,
+# since the compiled index is a per-host cache (each host mmaps its own copy). Reads (building a matcher)
+# never lock: they rely on the atomic temp+rename in Manifest and are always safe.
 
 package Cavil::Matcher::Index;
 
@@ -28,6 +29,7 @@ no warnings 'experimental::signatures';
 use Cavil::Matcher;
 use Cavil::Matcher::Manifest;
 use Carp 'croak';
+use Fcntl ':flock';
 use File::Spec;
 
 sub new ($class, %args) {
@@ -41,6 +43,17 @@ sub new ($class, %args) {
 sub dir        ($self) { $self->{dir} }
 sub _manifest  ($self) { Cavil::Matcher::Manifest->new(dir => $self->{dir}) }
 sub generation ($self) { $self->_manifest->generation }
+
+# Run a mutation under an exclusive advisory lock on a per-index lock file, held for the whole
+# read-modify-save so concurrent writers on the same host serialize. The lock is released when the
+# filehandle is closed as the sub returns - including if $code dies, since the handle is destroyed as the
+# stack unwinds.
+sub _locked ($self, $code) {
+  my $path = File::Spec->catfile($self->{dir}, '.lock');
+  open my $lock, '>', $path or croak "cannot open index lock $path: $!";    # uncoverable branch true (I/O error)
+  flock $lock, LOCK_EX or croak "cannot lock index $path: $!";              # uncoverable branch true (flock failure)
+  return $code->();
+}
 
 # Checksum a segment file with the engine's own hash (no extra dependency), for manifest-level
 # integrity on top of the segment's internal CRC.
@@ -68,37 +81,41 @@ sub _compile_segment ($self, $patterns, $gen, $basename) {
 # $patterns is an arrayref of [id, pattern_text]. Returns the new generation.
 sub add_segment ($self, $patterns) {
   return $self->generation unless $patterns && @$patterns;
-  my $man  = $self->_manifest;
-  my $gen  = $man->bump;
-  my $file = sprintf('seg-%010d.seg', $gen);
-  $self->_compile_segment($patterns, $gen, $file) or croak "failed to compile segment $file";
-  my $path = File::Spec->catfile($self->{dir}, $file);
+  return $self->_locked(sub {
+    my $man  = $self->_manifest;
+    my $gen  = $man->bump;
+    my $file = sprintf('seg-%010d.seg', $gen);
+    $self->_compile_segment($patterns, $gen, $file) or croak "failed to compile segment $file";
+    my $path = File::Spec->catfile($self->{dir}, $file);
 
-  # Fail closed: we just wrote this segment, so we must be able to checksum it. An empty result means the
-  # file could not be read back (transient I/O or permissions) - store no entry rather than one that
-  # silently opts out of the manifest-level integrity check. (An empty checksum in a *read* manifest is
-  # still honoured for backward compatibility; only fresh writes are strict.)
-  my $checksum = _checksum($path);
-  croak "failed to checksum new segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
+    # Fail closed: we just wrote this segment, so we must be able to checksum it. An empty result means
+    # the file could not be read back (transient I/O or permissions) - store no entry rather than one
+    # that silently opts out of the manifest-level integrity check. (An empty checksum in a *read*
+    # manifest is still honoured for backward compatibility; only fresh writes are strict.)
+    my $checksum = _checksum($path);
+    croak "failed to checksum new segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
 
-  # Introducing an id must un-suppress it: clear any tombstone for the ids in this segment, so a
-  # delete-then-re-add of the same id takes effect immediately rather than staying hidden until the next
-  # merge clears all tombstones. (Cavil's pattern ids are DB-immutable so reuse should not happen; this
-  # keeps the lifecycle correct if it ever does, instead of silently relying on that invariant.)
-  $man->remove_tombstones(map { $_->[0] } @$patterns);
-  $man->add_segment(file => $file, checksum => $checksum, pattern_count => scalar @$patterns);
-  $man->save;
-  return $gen;
+    # Introducing an id must un-suppress it: clear any tombstone for the ids in this segment, so a
+    # delete-then-re-add of the same id takes effect immediately rather than staying hidden until the
+    # next merge clears all tombstones. (Cavil's pattern ids are DB-immutable so reuse should not happen;
+    # this keeps the lifecycle correct if it ever does, instead of silently relying on that invariant.)
+    $man->remove_tombstones(map { $_->[0] } @$patterns);
+    $man->add_segment(file => $file, checksum => $checksum, pattern_count => scalar @$patterns);
+    $man->save;
+    return $gen;
+  });
 }
 
 # Record pattern ids as removed. No segment is recompiled; the engine drops these before resolution.
 sub tombstone ($self, @ids) {
   return $self->generation unless @ids;
-  my $man = $self->_manifest;
-  $man->bump;
-  $man->add_tombstones(@ids);
-  $man->save;
-  return $man->generation;
+  return $self->_locked(sub {
+    my $man = $self->_manifest;
+    $man->bump;
+    $man->add_tombstones(@ids);
+    $man->save;
+    return $man->generation;
+  });
 }
 
 # Rare compaction: rebuild a single base segment from the authoritative pattern set and retire every
@@ -106,32 +123,34 @@ sub tombstone ($self, @ids) {
 # tombstone list bounded over time. Reading the full set from the caller (the DB) keeps the engine
 # simple and the source of truth in PostgreSQL. Returns the new generation.
 sub merge ($self, $patterns) {
-  my $man  = $self->_manifest;
-  my $gen  = $man->bump;
-  my $file = sprintf('base-%010d.seg', $gen);
-  $self->_compile_segment($patterns // [], $gen, $file) or croak "failed to compile base segment $file";
-  my $path = File::Spec->catfile($self->{dir}, $file);
+  return $self->_locked(sub {
+    my $man  = $self->_manifest;
+    my $gen  = $man->bump;
+    my $file = sprintf('base-%010d.seg', $gen);
+    $self->_compile_segment($patterns // [], $gen, $file) or croak "failed to compile base segment $file";
+    my $path = File::Spec->catfile($self->{dir}, $file);
 
-  # Fail closed on a fresh write, as in add_segment: a base we just wrote but cannot checksum must not
-  # be recorded with an integrity-check-disabling empty checksum.
-  my $checksum = _checksum($path);
-  croak "failed to checksum new base segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
+    # Fail closed on a fresh write, as in add_segment: a base we just wrote but cannot checksum must not
+    # be recorded with an integrity-check-disabling empty checksum.
+    my $checksum = _checksum($path);
+    croak "failed to checksum new base segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
 
-  my @old = map { $_->{file} } @{$man->segments};
-  $man->set_segments({file => $file, checksum => $checksum, pattern_count => scalar @{$patterns // []}});
-  $man->clear_tombstones;
-  $man->save;
+    my @old = map { $_->{file} } @{$man->segments};
+    $man->set_segments({file => $file, checksum => $checksum, pattern_count => scalar @{$patterns // []}});
+    $man->clear_tombstones;
+    $man->save;
 
-  # Unlink the superseded segments only after the manifest that points away from them has been written
-  # and atomically renamed, so a concurrent reader never follows the manifest to a just-deleted file.
-  # This ordering is not crash-durable (no fsync): the whole index is a disposable cache rebuilt from
-  # PostgreSQL, so the recovery model for a power-loss mid-merge is simply to rebuild, not to guarantee
-  # the on-disk bytes survived.
-  for my $f (@old) {
-    next if $f eq $file;    # uncoverable branch true (base name is unique per generation)
-    unlink File::Spec->catfile($self->{dir}, $f);
-  }
-  return $gen;
+    # Unlink the superseded segments only after the manifest that points away from them has been written
+    # and atomically renamed, so a concurrent reader never follows the manifest to a just-deleted file.
+    # This ordering is not crash-durable (no fsync): the whole index is a disposable cache rebuilt from
+    # PostgreSQL, so the recovery model for a power-loss mid-merge is simply to rebuild, not to guarantee
+    # the on-disk bytes survived.
+    for my $f (@old) {
+      next if $f eq $file;    # uncoverable branch true (base name is unique per generation)
+      unlink File::Spec->catfile($self->{dir}, $f);
+    }
+    return $gen;
+  });
 }
 
 # Build a ready-to-query engine: attach every active segment (skipping any that are missing, fail their
