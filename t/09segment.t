@@ -260,4 +260,27 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   cmp_deeply($e->find_matches($ok), [[7, 1, 1]], 'an in-range id matches normally');
 }
 
+# --- Malformed token arrays are rejected, so one bad pattern cannot invalidate the whole segment ---
+# add_pattern's tokens come from parse_tokens (real hashes, or skip widths 1..99). Token 0 would build a
+# zero-width skip node the reader rejects - invalidating the segment and dropping every other pattern in
+# it (the reported failure). A leading/trailing skip makes an unanchored pattern. Both must croak.
+{
+  my $big = 12345678901234;                   # a stand-in "real" token hash (well above MAX_SKIP)
+  my $e   = Cavil::Matcher::init_matcher();
+  $e->add_pattern(1, Cavil::Matcher::parse_tokens('permission is hereby granted'));
+  eval { $e->add_pattern(2, [0]) };
+  like($@, qr/invalid token 0/, 'add_pattern croaks on token 0 instead of corrupting the segment');
+  eval { $e->add_pattern(3, [5, $big]) };
+  like($@, qr/begin or end with a skip/, 'add_pattern croaks on a leading skip');
+  eval { $e->add_pattern(4, [$big, 5]) };
+  like($@, qr/begin or end with a skip/, 'add_pattern croaks on a trailing skip');
+
+  # The valid pattern added earlier is untouched by the rejected calls.
+  my $f = "$dir/tokprobe";
+  open my $fh, '>:raw', $f or die $!;
+  print {$fh} "permission is hereby granted\n";
+  close $fh;
+  cmp_deeply($e->find_matches($f), [[1, 1, 1]], 'a rejected malformed pattern does not disturb valid ones');
+}
+
 done_testing();

@@ -66,12 +66,25 @@ sub _checksum ($path) {
   return $ctx->hex;
 }
 
-# Compile one segment file from [[id, pattern_text], ...] at the given generation. Returns the file's
-# basename, or undef on failure.
-sub _compile_segment ($self, $patterns, $gen, $basename) {
+# Parse each [id, pattern_text] row to [id, \@tokens], dropping any row that normalizes to an empty token
+# list (text that is all punctuation or ignored words). Such a row can never match, so silently keeping
+# it would make the manifest's pattern_count claim a pattern was indexed when nothing compilable exists.
+# The count and the tombstone-clearing below therefore reflect what actually compiled, not what was asked.
+sub _parse_patterns ($patterns) {
+  my @parsed;
+  for my $row (@$patterns) {
+    my $tokens = Cavil::Matcher::parse_tokens($row->[1]);
+    push @parsed, [$row->[0], $tokens] if @$tokens;
+  }
+  return \@parsed;
+}
+
+# Compile one segment file from already-parsed [[id, \@tokens], ...] at the given generation. Returns the
+# file's basename, or undef on failure.
+sub _compile_segment ($self, $parsed, $gen, $basename) {
   my $engine = Cavil::Matcher::init_matcher();
   $engine->set_generation($gen);
-  $engine->add_pattern($_->[0], Cavil::Matcher::parse_tokens($_->[1])) for @$patterns;
+  $engine->add_pattern($_->[0], $_->[1]) for @$parsed;
   my $path = File::Spec->catfile($self->{dir}, $basename);
   return undef unless $engine->dump($path);
   return $basename;
@@ -81,11 +94,13 @@ sub _compile_segment ($self, $patterns, $gen, $basename) {
 # $patterns is an arrayref of [id, pattern_text]. Returns the new generation.
 sub add_segment ($self, $patterns) {
   return $self->generation unless $patterns && @$patterns;
+  my $parsed = _parse_patterns($patterns);
+  return $self->generation unless @$parsed;    # every row normalized to empty => nothing compilable to add
   return $self->_locked(sub {
     my $man  = $self->_manifest;
     my $gen  = $man->bump;
     my $file = sprintf('seg-%010d.seg', $gen);
-    $self->_compile_segment($patterns, $gen, $file) or croak "failed to compile segment $file";
+    $self->_compile_segment($parsed, $gen, $file) or croak "failed to compile segment $file";
     my $path = File::Spec->catfile($self->{dir}, $file);
 
     # Fail closed: we just wrote this segment, so we must be able to checksum it. An empty result means
@@ -99,8 +114,8 @@ sub add_segment ($self, $patterns) {
     # delete-then-re-add of the same id takes effect immediately rather than staying hidden until the
     # next merge clears all tombstones. (Cavil's pattern ids are DB-immutable so reuse should not happen;
     # this keeps the lifecycle correct if it ever does, instead of silently relying on that invariant.)
-    $man->remove_tombstones(map { $_->[0] } @$patterns);
-    $man->add_segment(file => $file, checksum => $checksum, pattern_count => scalar @$patterns);
+    $man->remove_tombstones(map { $_->[0] } @$parsed);
+    $man->add_segment(file => $file, checksum => $checksum, pattern_count => scalar @$parsed);
     $man->save;
     return $gen;
   });
@@ -134,11 +149,12 @@ sub tombstone ($self, @ids) {
 # tombstone list bounded over time. Reading the full set from the caller (the DB) keeps the engine
 # simple and the source of truth in PostgreSQL. Returns the new generation.
 sub merge ($self, $patterns) {
+  my $parsed = _parse_patterns($patterns // []);
   return $self->_locked(sub {
     my $man  = $self->_manifest;
     my $gen  = $man->bump;
     my $file = sprintf('base-%010d.seg', $gen);
-    $self->_compile_segment($patterns // [], $gen, $file) or croak "failed to compile base segment $file";
+    $self->_compile_segment($parsed, $gen, $file) or croak "failed to compile base segment $file";
     my $path = File::Spec->catfile($self->{dir}, $file);
 
     # Fail closed on a fresh write, as in add_segment: a base we just wrote but cannot checksum must not
@@ -147,7 +163,7 @@ sub merge ($self, $patterns) {
     croak "failed to checksum new base segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
 
     my @old = map { $_->{file} } @{$man->segments};
-    $man->set_segments({file => $file, checksum => $checksum, pattern_count => scalar @{$patterns // []}});
+    $man->set_segments({file => $file, checksum => $checksum, pattern_count => scalar @$parsed});
     $man->clear_tombstones;
     $man->save;
 

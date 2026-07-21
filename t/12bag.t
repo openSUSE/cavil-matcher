@@ -123,4 +123,17 @@ is($loaded->load(write_bytes("$dir/corrupt", $corrupt)), 0, 'flipped payload byt
 
 cmp_deeply($loaded->best_for($sample, 1), $before, 'the existing model is intact after every failed load');
 
+# Pattern id keys must be integers in range (same policy as the matcher); a non-integer, negative, zero
+# or out-of-range key croaks rather than silently coercing to 0 or 2^64-1 (a bogus result identity).
+{
+  eval { Cavil::Matcher::init_bag_of_patterns->set_patterns({abc => 'x'}) };
+  like($@, qr/invalid pattern id key/, 'set_patterns croaks on a non-integer id key');
+  eval { Cavil::Matcher::init_bag_of_patterns->set_patterns({'-1' => 'x'}) };
+  like($@, qr/invalid pattern id key/, 'set_patterns croaks on a negative id key');
+  eval { Cavil::Matcher::init_bag_of_patterns->set_patterns({'0' => 'x'}) };
+  like($@, qr/invalid pattern id key/, 'set_patterns croaks on id 0');
+  eval { Cavil::Matcher::init_bag_of_patterns->set_patterns({'4294967297' => 'x'}) };
+  like($@, qr/invalid pattern id key/, 'set_patterns croaks on an out-of-range id key');
+}
+
 done_testing();

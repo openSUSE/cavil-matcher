@@ -260,4 +260,16 @@ $itb->add_segment([[5, 'permission is hereby granted']]);
 $itb->tombstone(5);
 is_deeply($itb->_manifest->tombstones, [5], 'a valid tombstone id is recorded');
 
+# --- Empty-normalized patterns are not recorded as indexed (honest pattern_count) ----------------
+# A row that is all punctuation/ignored words parses to no tokens and can never match; it must not bump
+# the generation or inflate pattern_count with a phantom "indexed" pattern.
+my $dep = tempdir(CLEANUP => 1);
+my $iep = Cavil::Matcher::Index->new(dir => $dep);
+is($iep->add_segment([[1, ' *;,: ']]),  0, 'adding only an empty-normalized pattern is a no-op (no generation bump)');
+is(scalar @{$iep->_manifest->segments}, 0, 'no segment is written for an empty-normalized pattern');
+
+# A mixed batch records only the compilable rows in pattern_count.
+$iep->add_segment([[2, ' .. '], [3, 'permission is hereby granted']]);
+is($iep->_manifest->segments->[0]{pattern_count}, 1, 'pattern_count reflects compiled patterns, not requested rows');
+
 done_testing();

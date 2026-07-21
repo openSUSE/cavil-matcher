@@ -220,8 +220,24 @@ void     destroy_matcher(Matcher* m) { delete m; }
 
 void matcher_add_pattern(Matcher* m, unsigned int id, AV* tokens) {
   dTHX;
+  SSize_t len = av_top_index(tokens) + 1;
+
+  // Validate the token array before building any C++ container, so a croak (longjmp) cannot leak one.
+  // Tokens are the output of parse_tokens: real token hashes (all > MAX_SKIP) or skip widths 1..MAX_SKIP.
+  // 0 is the one corrupting value - it would build a skip node of width 0 that the segment reader later
+  // rejects, invalidating the whole segment and silently dropping every other pattern already added to
+  // it. A leading or trailing skip is rejected too (parse_tokens never emits one; it would make an
+  // unanchored pattern).
+  for (SSize_t i = 0; i < len; ++i) {
+    SV** e = av_fetch(tokens, i, 0);
+    UV   v = e ? SvUV(*e) : 0;
+    if (v == 0)
+      croak("Cavil::Matcher::add_pattern: invalid token 0 (expected a token hash or a 1..%d skip width)", MAX_SKIP);
+    if ((i == 0 || i == len - 1) && v <= (UV)MAX_SKIP)
+      croak("Cavil::Matcher::add_pattern: a pattern may not begin or end with a skip");
+  }
+
   std::vector<uint64_t> toks;
-  SSize_t               len = av_top_index(tokens) + 1;
   toks.reserve(len);
   for (SSize_t i = 0; i < len; ++i) {
     SV** e = av_fetch(tokens, i, 0);
@@ -268,19 +284,50 @@ void matcher_set_generation(Matcher* m, UV generation) { m->set_generation((uint
 Bag* pattern_init_bag() { return new Bag(); }
 void destroy_bag(Bag* b) { delete b; }
 
+// Parse a hash key as a pattern id: all digits, no sign/space/junk, in 1..UINT32_MAX (the same range the
+// matcher enforces). This replaces a bare strtoul() that ignored endptr/range, so "abc" and "-1" no
+// longer become 0 and 2^64-1.
+static bool bag_key_id(const char* key, I32 klen, uint64_t& out) {
+  if (klen <= 0) return false;
+  uint64_t v = 0;
+  for (I32 i = 0; i < klen; ++i) {
+    if (key[i] < '0' || key[i] > '9') return false;
+    v = v * 10 + (uint64_t)(key[i] - '0');
+    if (v > 0xFFFFFFFFULL) return false;    // out of range (also caps overflow)
+  }
+  if (v < 1) return false;
+  out = v;
+  return true;
+}
+
 void bag_set_patterns(Bag* b, HV* patterns) {
   dTHX;
+  HE* he;
+
+  // Pass 1: validate every key before building anything, so a croak cannot leak a half-built vector.
+  hv_iterinit(patterns);
+  while ((he = hv_iternext(patterns)) != 0) {
+    I32      klen;
+    char*    key = hv_iterkey(he, &klen);
+    uint64_t id;
+    if (!bag_key_id(key, klen, id))
+      croak("Cavil::Matcher::Bag::set_patterns: invalid pattern id key '%.*s' (must be an integer 1..4294967295)",
+            (int)klen, key);
+  }
+
+  // Pass 2: build (every key already validated above, so bag_key_id cannot fail here).
   std::vector<std::pair<uint64_t, std::string>> ps;
   hv_iterinit(patterns);
-  HE* he;
   while ((he = hv_iternext(patterns)) != 0) {
-    I32   klen;
-    char* key = hv_iterkey(he, &klen);
-    SV*   svp = hv_iterval(patterns, he);
+    I32      klen;
+    char*    key = hv_iterkey(he, &klen);
+    uint64_t id  = 0;
+    bag_key_id(key, klen, id);
+    SV* svp = hv_iterval(patterns, he);
     if (!svp) continue;
     STRLEN vlen;
     char*  val = SvPV(svp, vlen);
-    ps.emplace_back((uint64_t)strtoul(key, 0, 10), std::string(val, vlen));
+    ps.emplace_back(id, std::string(val, vlen));
   }
   b->set_patterns(ps);
 }
