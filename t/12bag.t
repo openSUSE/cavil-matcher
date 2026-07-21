@@ -51,20 +51,27 @@ for my $text ('', 'x', "binary\x00text", join('', map { chr(int(rand(256))) } 1 
   ok(ref($bag->best_for($text, 3)) eq 'ARRAY', 'best_for survives hostile/edge input');
 }
 
-# A failed load (truncated file) must leave the existing model intact, not wipe it.
+# The cache is a versioned, CRC-checked format: truncated / wrong-magic / wrong-version / corrupt
+# files are all rejected, and a rejected load must leave any existing model intact (not wipe it).
 my $sample = slurp('t/fixtures/licenses/04license.1.txt');
 my $before = $loaded->best_for($sample, 1);
 ok(@$before, 'model matches before a bad load');
-my $truncated = "$dir/truncated";
-{
-  open my $fh, '<:raw', $file or die $!;
-  read $fh, my $bytes, 32;    # a valid header prefix, then nothing - a truncated cache
-  close $fh;
-  open my $out, '>:raw', $truncated or die $!;
-  print {$out} $bytes;
-  close $out;
-}
-is($loaded->load($truncated), 0, 'loading a truncated bag returns false');
-cmp_deeply($loaded->best_for($sample, 1), $before, 'a failed load leaves the existing model intact');
+my $good = slurp($file);
+
+sub write_bytes { my ($p, $b) = @_; open my $o, '>:raw', $p or die $!; print {$o} $b; close $o; $p }
+
+# Truncated payload (valid header, partial body): CRC fails.
+is($loaded->load(write_bytes("$dir/truncated", substr($good, 0, 48))), 0, 'truncated bag rejected');
+
+# Not a bag at all (wrong magic).
+is($loaded->load(write_bytes("$dir/garbage", 'not a bag file, just some bytes here at all')),
+  0, 'wrong-magic bag rejected');
+
+# Valid magic but a flipped payload byte fails the CRC.
+my $corrupt = $good;
+substr($corrupt, length($corrupt) - 1, 1) = chr(ord(substr($corrupt, length($corrupt) - 1, 1)) ^ 0xFF);
+is($loaded->load(write_bytes("$dir/corrupt", $corrupt)), 0, 'flipped payload byte fails CRC');
+
+cmp_deeply($loaded->best_for($sample, 1), $before, 'the existing model is intact after every failed load');
 
 done_testing();

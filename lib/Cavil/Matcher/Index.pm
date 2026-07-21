@@ -104,7 +104,11 @@ sub merge ($self, $patterns) {
   $man->clear_tombstones;
   $man->save;
 
-  # Only unlink the superseded segments after the manifest pointing away from them is durably in place.
+  # Unlink the superseded segments only after the manifest that points away from them has been written
+  # and atomically renamed, so a concurrent reader never follows the manifest to a just-deleted file.
+  # This ordering is not crash-durable (no fsync): the whole index is a disposable cache rebuilt from
+  # PostgreSQL, so the recovery model for a power-loss mid-merge is simply to rebuild, not to guarantee
+  # the on-disk bytes survived.
   for my $f (@old) {
     next if $f eq $file;    # uncoverable branch true (base name is unique per generation)
     unlink File::Spec->catfile($self->{dir}, $f);

@@ -121,4 +121,28 @@ my $none = Cavil::Matcher::init_matcher();
 $none->attach("$dir/does-not-exist.seg");
 cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'missing segment => no matches, no crash');
 
+# --- NUL contract (pinned) -----------------------------------------------------------------------
+# A NUL byte terminates tokenization of the line it is on (a deliberate parity with the previous
+# engine), so text after a NUL *within the same line* is not matched - but text on a later line is.
+# This characterizes the contract so it cannot change silently (it would alter matches and stored
+# hashes on every NUL-bearing file).
+{
+  my $nulm = Cavil::Matcher::init_matcher();
+  $nulm->add_pattern(1, Cavil::Matcher::parse_tokens('permission is hereby granted'));
+
+  my $after_nul = "$dir/after_nul";
+  open my $a, '>:raw', $after_nul or die $!;
+  print {$a} "prefix\0permission is hereby granted\n";
+  close $a;
+  cmp_deeply($nulm->find_matches($after_nul), [], 'text after a NUL on the same line is not matched');
+
+  my $next_line = "$dir/next_line";
+  open my $b, '>:raw', $next_line or die $!;
+  print {$b} "prefix\0junk\npermission is hereby granted\n";
+  close $b;
+  my $m = $nulm->find_matches($next_line);
+  is(scalar @$m, 1, 'the same text on a later line is matched normally');
+  is($m->[0][0], 1, 'matched the expected pattern on the post-NUL line');
+}
+
 done_testing();

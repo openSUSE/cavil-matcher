@@ -112,7 +112,9 @@ sub clear_tombstones ($self) {
   return $self;
 }
 
-# Atomic write: encode, write to a temp file, then rename over the real one.
+# Write the manifest by encoding to a temp file and renaming it over the real one. The rename is atomic
+# for readers (no reader ever sees a half-written file), but this is deliberately not fsync-durable: the
+# index is a disposable cache rebuilt from PostgreSQL, so crash recovery is "rebuild", not durability.
 sub save ($self) {
   my $json = Cpanel::JSON::XS->new->canonical->pretty->encode($self->{data});
   my $tmp  = "$self->{file}.tmp.$$";

@@ -72,6 +72,13 @@ void Tokenizer::add_token(TokenList& result, const char* start, size_t len, int 
   result.push_back(t);
 }
 
+// CONTRACT: NUL terminates tokenization of this buffer. tokenize() operates on a C string, so a NUL
+// byte ends the walk and any text after it in the same buffer is not tokenized. Files are scanned
+// line by line, so in practice only text after a NUL *within the same line* is skipped; subsequent
+// lines are tokenized normally. This matches the previous engine (Spooky::Patterns::XS) byte-for-byte,
+// which is why it is kept - changing it would alter matches (and stored hashes) on every NUL-bearing
+// file. Embedded-NUL survival (never crash) is asserted in t/10adversarial.t; the recall contract
+// above is pinned in t/09segment.t.
 void Tokenizer::tokenize(TokenList& result, char* str, int linenumber) const {
   static const char* ignore_seps = " \r\n\t*;,:!#{}()[]|></\\";
   static const char* single_seps = "?\"\'`'=";

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "bag.h"
+#include "segment.h"    // cavil_crc32
 #include "tokenizer.h"
 
 #include <algorithm>
@@ -102,93 +103,138 @@ std::vector<Bag::Hit> Bag::best_for(const std::string& snippet, unsigned int cou
   return hits;
 }
 
+// The bag cache is a disposable, engine-specific artifact, but load() is public API, so it gets the
+// same defenses as the segment format: a magic+version header, a CRC over the payload, and bounds
+// checks on every declared count so a malformed file can never drive a large allocation.
+#pragma pack(push, 1)
+struct BagHeader {
+  char     magic[8];
+  uint32_t version;
+  uint32_t crc32;
+  uint64_t idf_count;
+  uint64_t pattern_count;
+};
+#pragma pack(pop)
+static const char     BAG_MAGIC[8] = {'C', 'A', 'V', 'I', 'L', 'B', 'G', '1'};
+static const uint32_t BAG_VERSION  = 1;
+
+static void put_bytes(std::vector<char>& b, const void* p, size_t n) {
+  const char* c = static_cast<const char*>(p);
+  b.insert(b.end(), c, c + n);
+}
+
 bool Bag::dump(const std::string& path) const {
-  FILE* file = fopen(path.c_str(), "wb");
-  if (!file) return false;
-
-  bool ok  = true;
-  auto put = [&](const void* p, size_t n) {
-    if (ok && fwrite(p, n, 1, file) != 1) ok = false;
-  };
-
-  uint64_t count = _idfs.size();
-  put(&count, sizeof(count));
+  std::vector<char> payload;
   for (const auto& it : _idfs) {
-    uint64_t f1 = it.first;
-    double   f2 = it.second;
-    put(&f1, sizeof(f1));
-    put(&f2, sizeof(f2));
+    uint64_t h = it.first;
+    double   v = it.second;
+    put_bytes(payload, &h, sizeof(h));
+    put_bytes(payload, &v, sizeof(v));
   }
-
-  count = _patterns.size();
-  put(&count, sizeof(count));
   for (const auto& p : _patterns) {
-    uint64_t f1 = p.index;
-    put(&f1, sizeof(f1));
-    double f2 = p.square_sum;
-    put(&f2, sizeof(f2));
-    uint64_t c = p.tf_idfs.size();
-    put(&c, sizeof(c));
+    uint64_t idx = p.index;
+    double   sq  = p.square_sum;
+    uint64_t c   = p.tf_idfs.size();
+    put_bytes(payload, &idx, sizeof(idx));
+    put_bytes(payload, &sq, sizeof(sq));
+    put_bytes(payload, &c, sizeof(c));
     for (const auto& t : p.tf_idfs) {
       uint64_t h = t.hash;
       double   v = t.value;
-      put(&h, sizeof(h));
-      put(&v, sizeof(v));
+      put_bytes(payload, &h, sizeof(h));
+      put_bytes(payload, &v, sizeof(v));
     }
   }
+
+  BagHeader h;
+  memcpy(h.magic, BAG_MAGIC, 8);
+  h.version       = BAG_VERSION;
+  h.idf_count     = _idfs.size();
+  h.pattern_count = _patterns.size();
+  h.crc32         = cavil_crc32(payload.data(), payload.size());
+
+  FILE* file = fopen(path.c_str(), "wb");
+  if (!file) return false;
+  bool ok = fwrite(&h, sizeof(h), 1, file) == 1;
+  if (ok && !payload.empty()) ok = fwrite(payload.data(), payload.size(), 1, file) == 1;
   if (fclose(file) != 0) ok = false;
   return ok;
 }
+
+// A bounded cursor over the validated payload: every read checks it stays in range.
+namespace {
+struct Cursor {
+  const char* p;
+  size_t      remaining;
+  bool        u64(uint64_t& out) {
+    if (remaining < sizeof(out)) return false;
+    memcpy(&out, p, sizeof(out));
+    p += sizeof(out);
+    remaining -= sizeof(out);
+    return true;
+  }
+  bool dbl(double& out) {
+    if (remaining < sizeof(out)) return false;
+    memcpy(&out, p, sizeof(out));
+    p += sizeof(out);
+    remaining -= sizeof(out);
+    return true;
+  }
+};
+}    // namespace
 
 bool Bag::load(const std::string& path) {
   FILE* file = fopen(path.c_str(), "rb");
   if (!file) return false;
 
-  // Parse into locals and swap into the object only on full success, so a truncated or malformed cache
-  // file leaves any existing model intact rather than wiping it.
+  // Read the whole file (bounded by its size), then validate before trusting anything.
+  std::vector<char> buf;
+  char              tmp[65536];
+  size_t            n;
+  while ((n = fread(tmp, 1, sizeof(tmp), file)) > 0) buf.insert(buf.end(), tmp, tmp + n);
+  fclose(file);
+
+  if (buf.size() < sizeof(BagHeader)) return false;
+  BagHeader h;
+  memcpy(&h, buf.data(), sizeof(h));
+  if (memcmp(h.magic, BAG_MAGIC, 8) != 0) return false;
+  if (h.version != BAG_VERSION) return false;
+
+  const char* payload     = buf.data() + sizeof(BagHeader);
+  size_t      payload_len = buf.size() - sizeof(BagHeader);
+  if (cavil_crc32(payload, payload_len) != h.crc32) return false;
+
+  // Reject counts that could not possibly fit in the payload before allocating anything.
+  if (h.idf_count > payload_len / 16) return false;             // each idf entry is 16 bytes
+  if (h.pattern_count > payload_len / 24) return false;         // each pattern block is >= 24 bytes
+
+  // Parse into locals and swap in only on full success, so a bad file never wipes an existing model.
   std::map<uint64_t, double> idfs;
   std::vector<Pattern>       patterns;
+  Cursor                     c{payload, payload_len};
 
-  bool     ok    = true;
-  uint64_t count = 0;
-  if (fread(&count, sizeof(count), 1, file) != 1) ok = false;
-  while (ok && count--) {
-    uint64_t f1 = 0;
-    double   f2 = 0;
-    if (fread(&f1, sizeof(f1), 1, file) != 1 || fread(&f2, sizeof(f2), 1, file) != 1) {
-      ok = false;
-      break;
-    }
-    idfs[f1] = f2;
+  for (uint64_t i = 0; i < h.idf_count; ++i) {
+    uint64_t hsh;
+    double   val;
+    if (!c.u64(hsh) || !c.dbl(val)) return false;
+    idfs[hsh] = val;
   }
-
-  if (ok && fread(&count, sizeof(count), 1, file) != 1) ok = false;
-  while (ok && count--) {
+  patterns.reserve(h.pattern_count);
+  for (uint64_t i = 0; i < h.pattern_count; ++i) {
     Pattern  p;
-    uint64_t f1 = 0;
-    double   f2 = 0;
-    uint64_t f3 = 0;
-    if (fread(&f1, sizeof(f1), 1, file) != 1 || fread(&f2, sizeof(f2), 1, file) != 1
-        || fread(&f3, sizeof(f3), 1, file) != 1) {
-      ok = false;
-      break;
-    }
-    p.index      = f1;
-    p.square_sum = f2;
-    while (ok && f3--) {
-      uint64_t h = 0;
-      double   v = 0;
-      if (fread(&h, sizeof(h), 1, file) != 1 || fread(&v, sizeof(v), 1, file) != 1) {
-        ok = false;
-        break;
-      }
-      p.tf_idfs.push_back({h, v});
+    uint64_t tcount;
+    if (!c.u64(p.index) || !c.dbl(p.square_sum) || !c.u64(tcount)) return false;
+    if (tcount > c.remaining / 16) return false;                // bound tf_idfs against remaining bytes
+    p.tf_idfs.reserve(tcount);
+    for (uint64_t j = 0; j < tcount; ++j) {
+      uint64_t hsh;
+      double   val;
+      if (!c.u64(hsh) || !c.dbl(val)) return false;
+      p.tf_idfs.push_back({hsh, val});
     }
     patterns.push_back(std::move(p));
   }
 
-  fclose(file);
-  if (!ok) return false;
   _idfs     = std::move(idfs);
   _patterns = std::move(patterns);
   return true;
