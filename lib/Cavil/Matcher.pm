@@ -69,8 +69,8 @@ Create a new matching engine (a L</Cavil::Matcher::Engine>).
   my $tokens = Cavil::Matcher::parse_tokens($pattern_text);
 
 Tokenize pattern text into the arrayref of token hashes that L</add_pattern> expects. C<$SKIP<n>> wildcards
-(match up to I<n> arbitrary words, I<n> up to 99) are recognised here; a pattern may not begin or end with a
-skip.
+are recognised here: each matches from B<one> up to I<n> arbitrary words (at least one, at most I<n> - never
+a zero-word gap), with I<n> up to 99. A pattern may not begin or end with a skip.
 
 =head2 normalize
 
@@ -82,7 +82,11 @@ Tokenize arbitrary text, returning each token with its line number and hash.
 
   my $edits = Cavil::Matcher::distance($norm_a, $norm_b);
 
-Token-level Levenshtein distance between two L</normalize> results.
+An approximate token-level edit distance between two L</normalize> results. B<Note:> for byte-for-byte
+parity it deliberately reproduces the previous engine (L<Spooky::Patterns::XS>), including its
+off-by-one (it compares I<count-1> tokens), so it is B<not> a strict Levenshtein distance and can
+report C<0> for inputs that differ only in a single or trailing token. It is currently unused within
+Cavil; once the previous engine is retired it can be made a strict Levenshtein.
 
 =head2 read_lines
 

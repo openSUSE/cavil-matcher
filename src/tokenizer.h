@@ -22,9 +22,9 @@ struct Token {
 };
 typedef std::vector<Token> TokenList;
 
-// $SKIP<n> matches up to n arbitrary words; n is capped at MAX_SKIP. Because real token hashes are
-// 64-bit SpookyHash values, the low integers 0..MAX_SKIP are effectively free and are reused to mean
-// "skip n words" inside a compiled pattern.
+// $SKIP<n> matches from one up to n arbitrary words (at least one, at most n - it never matches a
+// zero-word gap); n is capped at MAX_SKIP. Because real token hashes are 64-bit SpookyHash values, the
+// low integers 0..MAX_SKIP are effectively free and are reused to mean "skip n words" in a pattern.
 static const int MAX_SKIP = 99;
 
 // The tokenizer is stateless apart from the fixed set of "ignored" comment/markup words, so a single

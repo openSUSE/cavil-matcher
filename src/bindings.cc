@@ -120,34 +120,61 @@ int pattern_distance(AV* a1, AV* a2) {
 
 // Line numbers count physical newlines, not read chunks - identical logic to Matcher::find_matches, so
 // the two always agree on numbering (which is what snippet extraction relies on). A physical line longer
-// than the buffer is read in pieces sharing one line number; reads stay bounded (fixed-size chunks).
+// than the read buffer arrives in several chunks sharing one line number; for a requested line we
+// accumulate all of them so the returned text is the whole line - capped so a pathological single line
+// cannot exhaust memory. Reads themselves stay bounded (fixed-size chunks).
 AV* pattern_read_lines(const char* filename, HV* needed_lines) {
   dTHX;
   AV*   ret   = newAV();
   FILE* input = fopen(filename, "r");
   if (!input) return ret;
 
-  int    remaining = (int)HvUSEDKEYS(needed_lines);
-  char   buffer[64];
-  char   line[8000];
-  int    linenumber = 1;
+  const size_t MAX_LINE_BYTES = 1 << 20;    // at most 1 MiB of text returned per line
+
+  int         remaining  = (int)HvUSEDKEYS(needed_lines);
+  char        buffer[64];
+  char        line[8000];
+  int         linenumber = 1;
+  bool        at_start   = true;     // is this chunk the first of a physical line?
+  bool        collecting = false;    // is the current physical line one we were asked for?
+  UV          wanted_val = 0;
+  std::string acc;
+
+  auto emit = [&] {
+    AV* row = newAV();
+    av_push(row, newSVuv(linenumber));
+    av_push(row, newSVuv(wanted_val));
+    av_push(row, newSVpv(acc.data(), acc.size()));
+    av_push(ret, newRV_noinc((SV*)row));
+  };
+
   while (fgets(line, sizeof(line) - 1, input)) {
     size_t l        = strlen(line);
     bool   line_end = l > 0 && line[l - 1] == '\n';
+    size_t body     = line_end ? l - 1 : l;    // this chunk's bytes, excluding a trailing newline
 
-    int len = snprintf(buffer, sizeof(buffer), "%d", linenumber);
-    SV* val = hv_delete(needed_lines, buffer, len, 0);
-    if (val) {
-      if (line_end) line[--l] = 0;    // chop the trailing newline
-      AV* row = newAV();
-      av_push(row, newSVuv(linenumber));
-      av_push(row, newSVuv(SvUV(val)));
-      av_push(row, newSVpv(line, l));
-      av_push(ret, newRV_noinc((SV*)row));
-      if (--remaining <= 0) break;
+    if (at_start) {
+      int len = snprintf(buffer, sizeof(buffer), "%d", linenumber);
+      SV* val = hv_delete(needed_lines, buffer, len, 0);
+      collecting = val != nullptr;
+      wanted_val = val ? SvUV(val) : 0;
+      acc.clear();
     }
-    if (line_end) ++linenumber;
+    if (collecting && acc.size() < MAX_LINE_BYTES) {
+      acc.append(line, body < MAX_LINE_BYTES - acc.size() ? body : MAX_LINE_BYTES - acc.size());
+    }
+    if (line_end) {
+      if (collecting) {
+        emit();
+        collecting = false;
+        if (--remaining <= 0) break;
+      }
+      ++linenumber;
+    }
+    at_start = line_end;
   }
+  if (collecting) emit();    // a requested final line with no trailing newline
+
   fclose(input);
   return ret;
 }

@@ -160,6 +160,13 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   close $fh;
   cmp_deeply($lm->find_matches($longline), [[1, 1, 1]], 'match in a very long single line is reported on line 1');
 
+  # read_lines must return the WHOLE physical line (not just the first 8KB chunk), so the extracted
+  # snippet text actually contains the matched region past the first chunk.
+  my $long_rl = Cavil::Matcher::read_lines($longline, {1 => 1});
+  is($long_rl->[0][0], 1, 'read_lines returns line 1 of the long line');
+  cmp_ok(length($long_rl->[0][2]), '>', 8000, 'read_lines returns the full long line, not one chunk');
+  like($long_rl->[0][2], qr/permission is hereby granted/, 'the matched text is present in the returned line');
+
   # And a match on a genuinely later line still gets the right number, even after a long first line.
   my $twolines = "$dir/twolines";
   open my $fh2, '>:raw', $twolines or die $!;
@@ -170,6 +177,27 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   # read_lines uses the same numbering, so it agrees with find_matches.
   my $rl = Cavil::Matcher::read_lines($twolines, {2 => 1});
   is($rl->[0][0], 2, 'read_lines agrees: the pattern is on line 2');
+}
+
+# --- $SKIP<n> semantics (pinned): one to N words, never zero ---------------------------------------
+# $SKIP matches at least one and at most N words - it does NOT match a zero-word gap. This is the
+# documented contract and matches the previous engine; a change would alter matches across the corpus.
+{
+  my $sk = Cavil::Matcher::init_matcher();
+  $sk->add_pattern(1, Cavil::Matcher::parse_tokens('hello $SKIP2 world'));
+  my $gap = sub {
+    my $probe = "$dir/skipprobe";
+    open my $fh, '>:raw', $probe or die $!;
+    print {$fh} "$_[0]\n";
+    close $fh;
+    my $n = scalar @{$sk->find_matches($probe)};
+    unlink $probe;
+    return $n;
+  };
+  is($gap->('hello world'),          0, '$SKIP2 does not match a zero-word gap');
+  is($gap->('hello xx world'),       1, '$SKIP2 matches a one-word gap');
+  is($gap->('hello xx yy world'),    1, '$SKIP2 matches a two-word gap');
+  is($gap->('hello xx yy zz world'), 0, '$SKIP2 does not match a gap wider than N');
 }
 
 done_testing();

@@ -52,9 +52,10 @@ punctuation and common comment or markup noise is discarded, and each surviving 
 Only those numbers are ever compared. This is what lets a match survive reformatting, rewrapping, and
 different comment styles — the layout simply disappears during normalization.
 
-One wildcard exists. A pattern may say "skip up to N words here", which lets a single pattern absorb the parts
-of a license that legitimately vary, such as a copyright holder or a year. A pattern must begin and end on
-real words, never on a skip, so that every match is anchored at both ends.
+One wildcard exists. A pattern may say "skip one to N words here" (at least one word, at most N - it does not
+match a zero-word gap), which lets a single pattern absorb the parts of a license that legitimately vary, such
+as a copyright holder or a year. A pattern must begin and end on real words, never on a skip, so that every
+match is anchored at both ends.
 
 All of a collection's patterns are arranged into a shared prefix tree keyed on those word-numbers. Patterns
 that start with the same words share the same branch and only diverge where the words diverge. Scanning a file
