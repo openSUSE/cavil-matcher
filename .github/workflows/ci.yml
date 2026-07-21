@@ -32,6 +32,11 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Manifest is in sync (no test/dist file left out of the release)
+        run: >
+          perl -MExtUtils::Manifest=manicheck,filecheck
+          -e 'my @m = manicheck; my @e = filecheck; die "MANIFEST out of sync\n" if @m || @e;'
+
       - name: Developer differential tests (against Spooky::Patterns::XS, if it installs)
         continue-on-error: true
         run: |

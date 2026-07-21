@@ -36,7 +36,9 @@ AV* pattern_parse(const char* str) {
     av_store(ret, index, newSVuv(tok.hash));
     ++index;
   }
-  if (last_hash <= (uint64_t)MAX_SKIP) av_pop(ret);    // never end with a skip
+  // Never end with a skip. av_pop transfers one reference count to us, so drop it - otherwise the popped
+  // SV leaks once per pattern whose last token is a skip.
+  if (last_hash <= (uint64_t)MAX_SKIP) SvREFCNT_dec(av_pop(ret));
   return ret;
 }
 
@@ -152,9 +154,10 @@ AV* pattern_read_lines(const char* filename, HV* needed_lines) {
 
   long pos = ftell(input);
   while (fgets(line, sizeof(line) - 1, input)) {
-    long   npos     = ftell(input);
-    size_t l        = (pos >= 0 && npos >= pos) ? (size_t)(npos - pos) : strlen(line);
-    pos             = npos;
+    long   npos = ftell(input);
+    size_t l    = (pos >= 0 && npos >= pos) ? (size_t)(npos - pos) : strlen(line);
+    pos         = npos;
+    if (l >= sizeof(line)) l = strlen(line);    // clamp: a text-mode (CRLF) stdio delta can exceed the buffer
     bool   line_end = l > 0 && line[l - 1] == '\n';
     size_t body     = line_end ? l - 1 : l;    // this chunk's bytes, excluding a trailing newline
 

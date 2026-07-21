@@ -33,7 +33,7 @@ static const uint32_t SEG_NONE = 0xFFFFFFFFu;
 // Magic and format version of a compiled segment. Bump SEGMENT_FORMAT_VERSION on any layout change so
 // an old/foreign file is rejected rather than mis-read.
 static const char SEGMENT_MAGIC[8]           = {'C', 'A', 'V', 'I', 'L', 'S', 'G', '1'};
-static const uint32_t SEGMENT_FORMAT_VERSION = 1;
+static const uint32_t SEGMENT_FORMAT_VERSION = 2;    // v2 added longest_span (skip-expanded match span)
 
 #pragma pack(push, 1)
 struct SegmentHeader {
@@ -47,7 +47,11 @@ struct SegmentHeader {
   uint32_t skip_count;
   uint32_t pattern_count;
   uint32_t payload_crc32;
-  uint32_t reserved;
+  // The largest number of file tokens any single pattern in this segment can match, counting each $SKIP
+  // as its full width (e.g. "a $SKIP99 b" spans up to 101). find_matches sizes its streaming window on
+  // this, not on the pattern token count, so a skip pattern whose anchors straddle a flush boundary is
+  // not missed. (Same byte offset as the old reserved field; the version bump to 2 gives it meaning.)
+  uint32_t longest_span;
 };
 struct FlatNode {
   uint32_t pid;
@@ -76,6 +80,7 @@ public:
   void add_pattern(uint32_t id, const std::vector<uint64_t>& tokens);
   bool empty() const { return _pattern_count == 0; }
   int64_t longest_pattern() const { return _longest; }
+  int64_t longest_span() const { return _max_span; }
 
   // Serialize into a flat buffer (header + arrays + CRC). generation is stamped into the header.
   std::vector<char> compile(uint64_t generation) const;
@@ -89,6 +94,7 @@ private:
   std::vector<BuildNode> _nodes;    // _nodes[0] is the root
   uint32_t               _pattern_count = 0;
   int64_t                _longest       = 0;
+  int64_t                _max_span      = 0;
 };
 
 // Read-only view over a compiled segment buffer. Does not own the memory unless it was handed an owned
@@ -106,6 +112,7 @@ public:
 
   bool     valid() const { return _valid; }
   int64_t  longest_pattern() const { return _valid ? _header->longest_pattern : 0; }
+  int64_t  longest_span() const { return _valid ? (int64_t)_header->longest_span : 0; }
   uint64_t generation() const { return _valid ? _header->generation : 0; }
   uint32_t pattern_count() const { return _valid ? _header->pattern_count : 0; }
 

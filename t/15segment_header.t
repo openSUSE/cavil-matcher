@@ -52,7 +52,7 @@ my $good = slurp($seg);
 
 # Sanity: untouched, it attaches; and our CRC32 matches the stored one (so the recompute cases below are
 # trustworthy). Header layout (packed): flags@12, longest_pattern@24 (i64), node_count@32, child_count@36,
-# skip_count@40, pattern_count@44, payload_crc32@48, reserved@52; payload begins at 56.
+# skip_count@40, pattern_count@44, payload_crc32@48, longest_span@52; payload begins at 56.
 is(accepts($good),           1,                                 'the untampered segment attaches');
 is(crc32(substr($good, 56)), unpack('V', substr($good, 48, 4)), 'pure-Perl CRC32 matches the stored payload CRC');
 
@@ -67,14 +67,22 @@ cmp_ok($skip_count, '>=', 1, 'the fixture segment has at least one skip to tampe
   substr($b, 12, 4) = pack('V', 1);
   is(accepts($b), 0, 'nonzero flags rejected');
 }
+
+# longest_span sizes the streaming window; it must be in [longest_pattern, longest_pattern * MAX_SKIP].
+my $longest_pattern = unpack('q<', substr($good, 24, 8));
 {
   my $b = $good;
-  substr($b, 52, 4) = pack('V', 1);
-  is(accepts($b), 0, 'nonzero reserved rejected');
+  substr($b, 52, 4) = pack('V', $longest_pattern - 1);    # below longest_pattern: impossible
+  is(accepts($b), 0, 'a longest_span smaller than longest_pattern is rejected');
 }
 {
   my $b = $good;
-  substr($b, 24, 8) = pack('q<', 1_000_000_000);    # longest_pattern >> node_count
+  substr($b, 52, 4) = pack('V', 1_000_000);               # far above longest_pattern * MAX_SKIP
+  is(accepts($b), 0, 'an out-of-range longest_span (would bloat the scan window) is rejected');
+}
+{
+  my $b = $good;
+  substr($b, 24, 8) = pack('q<', 1_000_000_000);          # longest_pattern >> node_count
   is(accepts($b), 0, 'an out-of-range longest_pattern (would blow up the scan window) is rejected');
 }
 {

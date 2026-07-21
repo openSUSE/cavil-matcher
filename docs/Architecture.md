@@ -64,9 +64,13 @@ consequence is that scanning speed barely depends on how many patterns there are
 once, and only branches that actually occur in the file are ever explored.
 
 When several patterns match overlapping parts of a file, the longest match wins; an exact tie is resolved in
-favour of the more recently added pattern, on the assumption that newer patterns are the more specific ones.
-This resolution is a pure function of the set of raw matches, which is what makes the segmented design below
-safe: it does not matter how the raw matches were gathered, only what they are.
+favour of the higher pattern identifier, on the assumption that newer patterns are the more specific ones.
+This "higher id means newer" rule holds because identifiers are assigned monotonically as patterns are
+created (Cavil uses a database sequence), which is a required invariant of any caller: the resolver only ever
+sees identifiers, not creation timestamps or segment order, so if identifiers were reused or assigned
+non-monotonically the tie-break would no longer prefer the genuinely newer pattern. This resolution is a pure
+function of the set of raw matches, which is what makes the segmented design below safe: it does not matter
+how the raw matches were gathered, only what they are.
 
 ## Segments, tombstones, and the manifest
 

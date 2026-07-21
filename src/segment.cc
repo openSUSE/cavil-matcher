@@ -74,6 +74,15 @@ void BuildTrie::add_pattern(uint32_t id, const std::vector<uint64_t>& tokens) {
   _nodes[current].pid = id;
 
   if ((int64_t)tokens.size() > _longest) _longest = (int64_t)tokens.size();
+
+  // Track the skip-expanded span: how many file tokens this pattern can cover at most. A literal token
+  // covers exactly one; a $SKIP<n> covers up to n. find_matches sizes its streaming window on the max of
+  // this across patterns (see matcher.cc), so a skip pattern whose anchors are far apart is never evicted
+  // before its far anchor arrives.
+  int64_t span = 0;
+  for (uint64_t tok : tokens) span += (tok <= (uint64_t)MAX_SKIP) ? (int64_t)tok : 1;
+  if (span > _max_span) _max_span = span;
+
   _pattern_count++;
 }
 
@@ -129,7 +138,7 @@ std::vector<char> BuildTrie::compile(uint64_t generation) const {
   h->child_count    = child_count;
   h->skip_count     = skip_count;
   h->pattern_count  = _pattern_count;
-  h->reserved       = 0;
+  h->longest_span   = (uint32_t)_max_span;
   h->payload_crc32  = cavil_crc32(p + sizeof(SegmentHeader), total - sizeof(SegmentHeader));
 
   return buf;
@@ -184,11 +193,18 @@ bool Segment::open(const char* data, size_t len) {
   //   - unknown flags/reserved bits must be zero (forward-compat + no silently-honoured feature),
   //   - longest_pattern must fit the tree: a pattern of L tokens occupies L nodes below the root, so
   //     0 <= longest_pattern <= node_count - 1 (this also keeps longest * 100 far from int64 overflow).
+  //   - longest_span sizes the streaming window (retention + eviction threshold), so it must be sane:
+  //     at least longest_pattern (every token spans >= 1) and at most longest_pattern * MAX_SKIP (each
+  //     token spans <= MAX_SKIP). That bounds it to the segment's own scale, so a crafted value cannot
+  //     make the window retain an unbounded number of tokens.
   // (pattern_count is deliberately NOT bounded by node_count: duplicate patterns that normalize to the
   // same token sequence share one terminal node yet each counts, so pattern_count can legitimately
   // exceed node_count. It is informational only and steers nothing, so it needs no validation.)
-  if (h->flags != 0 || h->reserved != 0) return false;
+  if (h->flags != 0) return false;
   if (h->longest_pattern < 0 || (uint64_t)h->longest_pattern >= h->node_count) return false;
+  if ((uint64_t)h->longest_span < (uint64_t)h->longest_pattern
+    || (uint64_t)h->longest_span > (uint64_t)h->longest_pattern * MAX_SKIP)
+    return false;
 
   const FlatNode*  nodes    = reinterpret_cast<const FlatNode*>(data + sizeof(SegmentHeader));
   const FlatChild* children = reinterpret_cast<const FlatChild*>(data + sizeof(SegmentHeader) + nodes_bytes);

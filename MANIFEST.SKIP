@@ -12,4 +12,5 @@
 ~$
 ^\.git
 ^\.github/
+^\.perltidyrc$
 \.bak$

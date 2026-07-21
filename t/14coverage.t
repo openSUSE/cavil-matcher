@@ -298,6 +298,14 @@ close $mf;
 cmp_ok(scalar @{$img->matcher(quiet => 1)->find_matches($mtgt)}, '>', 0, 'the merged index still matches throughout');
 ok($img->matcher(strict => 1), 'strict matcher() returns an engine when the index is healthy');
 
+# A crash-leftover temp file (a hard kill between write and rename) is swept by the next merge.
+my $stale = "$dmg/base-0000000099.seg.tmp.12345";
+open my $sfh, '>:raw', $stale or die $!;
+print {$sfh} 'junk';
+close $sfh;
+$img->merge([[1, 'permission is hereby granted']]);
+ok(!-e $stale, 'merge sweeps a crash-leftover .tmp file');
+
 # --- strict mode fails closed on a degraded index -----------------------------------------------
 # Default is best-effort (warn + skip a bad segment, still return an engine); strict => 1 refuses to
 # build a matcher against an incomplete index, so an authoritative scan cannot silently miss licenses.

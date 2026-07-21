@@ -119,9 +119,13 @@ std::vector<ResolvedMatch> Matcher::find_matches(const std::string& path) {
   collect_active(segs);
   if (segs.empty()) return result;
 
-  int64_t longest = 1;
+  // Size the streaming window on the largest skip-expanded match SPAN, not the pattern token count. A
+  // pattern like "a $SKIP99 b" is 3 tokens but can span 101 file tokens; using the token count here would
+  // let the window evict (and finalize) the first anchor before the far anchor is read, silently dropping
+  // the match on a large file. (The previous engine had exactly this bug.)
+  int64_t span = 1;
   for (const Segment* s : segs)
-    if (s->longest_pattern() > longest) longest = s->longest_pattern();
+    if (s->longest_span() > span) span = s->longest_span();
 
   FILE* input = fopen(path.c_str(), "r");
   if (!input) return result;
@@ -144,14 +148,19 @@ std::vector<ResolvedMatch> Matcher::find_matches(const std::string& path) {
   // hide it and mis-number every following line on binary/NUL-bearing input.
   long pos = ftell(input);
   while (fgets(line, sizeof(line) - 1, input)) {
-    long   npos     = ftell(input);
-    size_t got      = (pos >= 0 && npos >= pos) ? (size_t)(npos - pos) : strlen(line);
-    pos             = npos;
-    bool   line_end = got > 0 && line[got - 1] == '\n';
+    long   npos = ftell(input);
+    size_t got  = (pos >= 0 && npos >= pos) ? (size_t)(npos - pos) : strlen(line);
+    pos         = npos;
+    // On Linux "r" is untranslated so got == bytes in the buffer; guard anyway against a text-mode stdio
+    // (e.g. CRLF->LF on Windows) whose on-disk delta exceeds what fgets stored, which would index past line[].
+    if (got >= sizeof(line)) got = strlen(line);
+    bool line_end = got > 0 && line[got - 1] == '\n';
     tokenizer().tokenize(ts, line, linenumber);
     if (line_end) ++linenumber;
-    if ((int64_t)ts.size() > longest * 100) {
-      int erasing = (int)ts.size() - (int)longest - 1;
+    // Evict in big batches to amortize, but retain the last `span` tokens so any token we finalize here
+    // still has its whole potential match span present ahead of it (see the span comment above).
+    if ((int64_t)ts.size() > span * 100) {
+      int erasing = (int)ts.size() - (int)span;
       if (erasing > 0) {
         for (int i = 0; i < erasing; ++i)
           for (const Segment* s : segs) s->find_tokens(ts, ms, token_offset, i);

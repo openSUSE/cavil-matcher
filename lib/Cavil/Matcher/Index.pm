@@ -180,9 +180,15 @@ sub merge ($self, $patterns) {
     my %keep = map { $_ => 1 } (@old, $file);
     if (opendir my $dh, $self->{dir}) {    # uncoverable branch false (the index dir always exists here)
       for my $f (readdir $dh) {
-        next unless $f =~ /^(?:seg|base)-[0-9]+\.seg\z/;
-        next if $keep{$f};
-        unlink File::Spec->catfile($self->{dir}, $f);
+
+        # Sweep two things: segment files no longer referenced (prior-merge orphans), and crash-leftover
+        # temp files (*.tmp.<pid> from a hard kill between write and rename in dump/save). We hold the
+        # writer lock and our own temps are already renamed by now, so any temp here is stale - otherwise
+        # these would accumulate forever (they never match a real segment name, so the checksum/-r guards
+        # ignore them, but they still litter the dir).
+        my $orphan_seg = $f =~ /^(?:seg|base)-[0-9]+\.seg\z/ && !$keep{$f};
+        my $stale_tmp  = $f =~ /\.tmp\.[0-9]+\z/;
+        unlink File::Spec->catfile($self->{dir}, $f) if $orphan_seg || $stale_tmp;
       }
       closedir $dh;
     }

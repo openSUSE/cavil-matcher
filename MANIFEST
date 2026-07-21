@@ -1,5 +1,6 @@
 Changes
 COPYING
+docs/Architecture.md
 lib/Cavil/Matcher.pm
 lib/Cavil/Matcher/Index.pm
 lib/Cavil/Matcher/Manifest.pm
@@ -33,6 +34,8 @@ t/11index.t
 t/12bag.t
 t/13shared.t
 t/14coverage.t
+t/15segment_header.t
+t/16resolve.t
 t/fixtures/licenses/04license.1.pattern
 t/fixtures/licenses/04license.1.txt
 t/fixtures/licenses/04license.10.pattern

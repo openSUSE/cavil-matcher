@@ -319,4 +319,45 @@ cmp_deeply($none->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'miss
   cmp_deeply($e->find_matches($probe), [[1, 1, 1]], 'the working matcher survives a missing-file load');
 }
 
+# --- A wide $SKIP spanning the streaming flush boundary still matches -----------------------------
+# The streaming window must be sized on the skip-expanded match SPAN, not the pattern token count. With
+# "alpha $SKIP99 omega" (3 tokens but up to 101 file tokens) and the two anchors ~100 tokens apart in a
+# 500-token file, the previous logic evicted (and finalized) alpha before omega was read, dropping the
+# match. It must be found, reported across the physical lines of the two anchors.
+{
+  my $sk = Cavil::Matcher::init_matcher();
+  $sk->add_pattern(1, Cavil::Matcher::parse_tokens('alpha $SKIP99 omega'));
+
+  my @lines = (('filler') x 249, 'alpha', ('filler') x 99, 'omega', ('filler') x 150);    # alpha@250, omega@350
+  my $wide  = "$dir/wideskip";
+  open my $fh, '>:raw', $wide or die $!;
+  print {$fh} join("\n", @lines), "\n";
+  close $fh;
+  cmp_deeply(
+    $sk->find_matches($wide),
+    [[1, 250, 350]],
+    'a $SKIP99 match whose anchors straddle the old flush boundary is found'
+  );
+}
+
+# --- A skip match survives an ACTUAL streaming eviction (retention = span) -------------------------
+# With a smaller skip the window threshold (span*100) is low enough that a big file really does trigger
+# eviction. The match must still be found: retaining the last `span` tokens guarantees the far anchor is
+# present when the near one is finalized during eviction.
+{
+  my $sk = Cavil::Matcher::init_matcher();
+  $sk->add_pattern(1, Cavil::Matcher::parse_tokens('alpha $SKIP9 omega'));    # span 11 => evicts past ~1100 tokens
+
+  my @lines = (('filler') x 1089, 'alpha', ('filler') x 9, 'omega', ('filler') x 200);    # alpha@1090, omega@1100
+  my $big   = "$dir/evictskip";
+  open my $fh, '>:raw', $big or die $!;
+  print {$fh} join("\n", @lines), "\n";
+  close $fh;
+  cmp_deeply(
+    $sk->find_matches($big),
+    [[1, 1090, 1100]],
+    'a skip match is found even when its near anchor is finalized during an eviction'
+  );
+}
+
 done_testing();
