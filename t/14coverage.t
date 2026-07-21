@@ -239,4 +239,25 @@ eval { $sv->save };
 like($@, qr/cannot rename manifest/, 'save croaks when the manifest cannot be written');
 is(scalar(my @leftover = glob "$dsv/manifest.json.tmp.*"), 0, 'no temp file is left behind after a failed save');
 
+# --- tombstone() validates ids at the public boundary (like add_pattern) -------------------------
+# A bad id must fail loudly, not bump the generation and record a tombstone the engine can never apply.
+my $dtb = tempdir(CLEANUP => 1);
+my $itb = Cavil::Matcher::Index->new(dir => $dtb);
+eval { $itb->tombstone(4294967297) };
+like($@, qr/out of range/, 'tombstone croaks on an id above 2^32-1');
+eval { $itb->tombstone(0) };
+like($@, qr/out of range/, 'tombstone croaks on id 0');
+eval { $itb->tombstone('nope') };
+like($@, qr/out of range/, 'tombstone croaks on a non-integer id');
+eval { $itb->tombstone(undef) };
+like($@, qr/out of range/, 'tombstone croaks on an undef id');
+eval { $itb->tombstone(5, {}) };
+like($@, qr/out of range/, 'tombstone croaks if any id is a ref');
+is($itb->generation, 0, 'a rejected tombstone does not bump the generation');
+
+# A valid id is still recorded normally.
+$itb->add_segment([[5, 'permission is hereby granted']]);
+$itb->tombstone(5);
+is_deeply($itb->_manifest->tombstones, [5], 'a valid tombstone id is recorded');
+
 done_testing();

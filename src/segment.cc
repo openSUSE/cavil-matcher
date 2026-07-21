@@ -66,11 +66,11 @@ void BuildTrie::add_pattern(uint32_t id, const std::vector<uint64_t>& tokens) {
   }
 
   // Two patterns that normalize to the exact same token sequence collapse onto one terminal node; the
-  // later id wins (consistent with overlap resolution's newer-wins tie-break) and the collision is
-  // reported on stderr. Both still count as added, so pattern_count can exceed the number of distinct
-  // token sequences - that is intentional, not a leak.
-  if (_nodes[current].pid)
-    std::cerr << "cavil-matcher: id " << id << " overwrites " << _nodes[current].pid << std::endl;
+  // later id silently wins (consistent with overlap resolution's newer-wins tie-break). Duplicate
+  // normalized patterns are expected and harmless, and this dumb core must not print to stderr (it would
+  // spam a full re-index and test output), so the collision is not reported here - any policy about
+  // duplicates belongs to the Perl layer. Both ids still count as added, so pattern_count can exceed the
+  // number of distinct token sequences; that is intentional, not a leak.
   _nodes[current].pid = id;
 
   if ((int64_t)tokens.size() > _longest) _longest = (int64_t)tokens.size();

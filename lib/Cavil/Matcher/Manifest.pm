@@ -34,7 +34,7 @@ sub _default {
 # A manifest that cannot be read or parsed, or that carries an unknown format version, is treated as
 # empty rather than fatal - the index simply rebuilds. Never dies on a bad file.
 sub _read ($self) {
-  return _default() unless -r $self->{file};
+  return _default() unless -f $self->{file};    # a directory/socket at this path is "no manifest", not a read to decode
   my $json = do {
     open my $fh, '<:raw', $self->{file} or return _default();    # uncoverable branch true (unreadable after stat)
     local $/;

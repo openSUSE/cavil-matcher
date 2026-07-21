@@ -109,6 +109,17 @@ sub add_segment ($self, $patterns) {
 # Record pattern ids as removed. No segment is recompiled; the engine drops these before resolution.
 sub tombstone ($self, @ids) {
   return $self->generation unless @ids;
+
+  # Validate at the public boundary, as add_pattern does: a tombstone id must be an integer in the
+  # engine's 32-bit id space. Otherwise we would bump the generation and record a tombstone the native
+  # engine can never apply (it ignores out-of-range ids to avoid uint32 wraparound), and the manifest
+  # reader would silently drop it on the next load - a dead write.
+  for my $id (@ids) {
+    croak sprintf('Cavil::Matcher::Index::tombstone: id %s out of range (must be 1..4294967295)',
+      defined $id && !ref $id ? $id : '(invalid)')
+      unless defined $id && !ref $id && $id =~ /^[0-9]+$/ && $id >= 1 && $id <= 4294967295;
+  }
+
   return $self->_locked(sub {
     my $man = $self->_manifest;
     $man->bump;
