@@ -189,23 +189,27 @@ bool Bag::load(const std::string& path) {
   FILE* file = fopen(path.c_str(), "rb");
   if (!file) return false;
 
-  // Read the whole file (CRC covers the full payload, so it must all be in memory), but refuse an
-  // absurdly large file before it can exhaust memory - a sanity bound far above any real bag, not a
-  // format limit.
-  static const size_t MAX_BAG_BYTES = size_t(2) << 30;    // 2 GiB
-  std::vector<char>   buf;
-  char                tmp[65536];
-  size_t              n;
-  while ((n = fread(tmp, 1, sizeof(tmp), file)) > 0) {
-    if (buf.size() + n > MAX_BAG_BYTES) {
-      fclose(file);
-      return false;
-    }
-    buf.insert(buf.end(), tmp, tmp + n);
+  // Header-first size check: learn the file size before reading any payload, and reject anything too
+  // small to hold a header or larger than a project-realistic bound, so a hostile file can never drive a
+  // large allocation. The CRC covers the whole payload so it must all be read, but only up to this cap.
+  // The full-corpus bag is ~34 MiB today (~1.2 KiB/pattern); 256 MiB is ample headroom (~200k patterns)
+  // while being far below a size that could pressure memory - bump it if the corpus ever approaches it.
+  static const long MAX_BAG_BYTES = 256L << 20;    // 256 MiB
+  if (fseek(file, 0, SEEK_END) != 0) {
+    fclose(file);
+    return false;
   }
-  fclose(file);
+  long fsize = ftell(file);
+  if (fsize < (long)sizeof(BagHeader) || fsize > MAX_BAG_BYTES) {
+    fclose(file);
+    return false;
+  }
+  rewind(file);
 
-  if (buf.size() < sizeof(BagHeader)) return false;
+  std::vector<char> buf(fsize);
+  bool              read_ok = fread(buf.data(), 1, (size_t)fsize, file) == (size_t)fsize;
+  fclose(file);
+  if (!read_ok) return false;
   BagHeader h;
   memcpy(&h, buf.data(), sizeof(h));
   if (memcmp(h.magic, BAG_MAGIC, 8) != 0) return false;
@@ -237,14 +241,23 @@ bool Bag::load(const std::string& path) {
     if (!c.u64(p.index) || !c.dbl(p.square_sum) || !c.u64(tcount)) return false;
     if (tcount > c.remaining / 16) return false;                // bound tf_idfs against remaining bytes
     p.tf_idfs.reserve(tcount);
+    uint64_t prev_hash = 0;
     for (uint64_t j = 0; j < tcount; ++j) {
       uint64_t hsh;
       double   val;
       if (!c.u64(hsh) || !c.dbl(val)) return false;
+      // compare2 merges tf_idfs assuming strictly ascending hashes (a real writer sorts a de-duplicated
+      // word map). Reject anything else so a CRC-valid but malformed bag cannot yield wrong rankings.
+      if (j > 0 && hsh <= prev_hash) return false;
+      prev_hash = hsh;
       p.tf_idfs.push_back({hsh, val});
     }
     patterns.push_back(std::move(p));
   }
+
+  // No trailing bytes after the declared records (the segment reader enforces the same exactness): the
+  // CRC then genuinely covers "everything that is here", not "a valid prefix".
+  if (c.remaining != 0) return false;
 
   _idfs     = std::move(idfs);
   _patterns = std::move(patterns);

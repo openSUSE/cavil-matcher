@@ -116,6 +116,15 @@ sub clear_tombstones ($self) {
   return $self;
 }
 
+# Drop specific tombstones - used when a pattern id is (re)introduced by a new segment, so a stale
+# tombstone can no longer suppress it.
+sub remove_tombstones ($self, @ids) {
+  return $self unless @ids;
+  my %drop = map { $_ => 1 } @ids;
+  $self->{data}{tombstones} = [grep { !$drop{$_} } @{$self->{data}{tombstones}}];
+  return $self;
+}
+
 # Write the manifest by encoding to a temp file and renaming it over the real one. The rename is atomic
 # for readers (no reader ever sees a half-written file), but this is deliberately not fsync-durable: the
 # index is a disposable cache rebuilt from PostgreSQL, so crash recovery is "rebuild", not durability.

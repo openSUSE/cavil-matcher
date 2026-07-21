@@ -65,6 +65,10 @@ void BuildTrie::add_pattern(uint32_t id, const std::vector<uint64_t>& tokens) {
     }
   }
 
+  // Two patterns that normalize to the exact same token sequence collapse onto one terminal node; the
+  // later id wins (consistent with overlap resolution's newer-wins tie-break) and the collision is
+  // reported on stderr. Both still count as added, so pattern_count can exceed the number of distinct
+  // token sequences - that is intentional, not a leak.
   if (_nodes[current].pid)
     std::cerr << "cavil-matcher: id " << id << " overwrites " << _nodes[current].pid << std::endl;
   _nodes[current].pid = id;
@@ -167,11 +171,12 @@ bool Segment::open(const char* data, size_t len) {
   // longest_pattern, which sizes find_matches' sliding window), so validate them before trusting them:
   //   - unknown flags/reserved bits must be zero (forward-compat + no silently-honoured feature),
   //   - longest_pattern must fit the tree: a pattern of L tokens occupies L nodes below the root, so
-  //     0 <= longest_pattern <= node_count - 1 (this also keeps longest * 100 far from int64 overflow),
-  //   - pattern_count cannot exceed the number of nodes (each pattern ends at a distinct node).
+  //     0 <= longest_pattern <= node_count - 1 (this also keeps longest * 100 far from int64 overflow).
+  // (pattern_count is deliberately NOT bounded by node_count: duplicate patterns that normalize to the
+  // same token sequence share one terminal node yet each counts, so pattern_count can legitimately
+  // exceed node_count. It is informational only and steers nothing, so it needs no validation.)
   if (h->flags != 0 || h->reserved != 0) return false;
   if (h->longest_pattern < 0 || (uint64_t)h->longest_pattern >= h->node_count) return false;
-  if (h->pattern_count > h->node_count) return false;
 
   const FlatNode*  nodes    = reinterpret_cast<const FlatNode*>(data + sizeof(SegmentHeader));
   const FlatChild* children = reinterpret_cast<const FlatChild*>(data + sizeof(SegmentHeader) + nodes_bytes);

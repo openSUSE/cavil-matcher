@@ -3,9 +3,11 @@
 
 #include "matcher.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <map>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -92,13 +94,6 @@ void Matcher::collect_active(std::vector<const Segment*>& out) {
     if (s->valid()) out.push_back(s.get());
 }
 
-// If either the start or the end of one region is within the other.
-static bool match_overlap(int s1, int e1, int s2, int e2) {
-  if (s1 >= s2 && s1 <= e2) return true;
-  if (e1 >= s2 && e1 <= e2) return true;
-  return false;
-}
-
 std::vector<ResolvedMatch> Matcher::find_matches(const std::string& path) {
   std::vector<ResolvedMatch> result;
 
@@ -162,21 +157,37 @@ std::vector<ResolvedMatch> Matcher::find_matches(const std::string& path) {
     ms.swap(kept);
   }
 
-  // Frozen overlap resolution: the longer match wins; on an exact tie the higher (newer) pattern id
-  // wins, on the assumption that newer patterns are the more specific ones.
-  while (!ms.empty()) {
-    RawMatch best = ms.front();
-    for (const RawMatch& it : ms) {
-      if (best.matched < it.matched || (best.matched == it.matched && best.pattern < it.pattern)) best = it;
+  // Overlap resolution (frozen semantics: the longer match wins; on an exact tie the higher/newer
+  // pattern id wins). The previous engine did this by repeatedly rescanning the whole match set and
+  // rebuilding a remainder - O(R^2) in the number of raw matches R, a real risk on keyword-heavy files
+  // that produce many matches. This computes byte-identical results in O(R log R): sort by that same
+  // priority (stable, so insertion order breaks the remaining ties exactly as the rescan did), then keep
+  // a match only if it does not overlap one already kept, using an interval map of the kept matches for
+  // an O(log R) overlap query instead of a full rescan.
+  //
+  // Equivalence rests on one property: matches are considered longest-first, so every already-kept match
+  // is at least as long as the candidate. Under that condition the frozen (asymmetric) match_overlap and
+  // an ordinary interval-overlap test give the same answer, so the kept set and its emission order are
+  // unchanged. The developer differential over the whole corpus verifies this end to end.
+  std::stable_sort(ms.begin(), ms.end(), [](const RawMatch& a, const RawMatch& b) {
+    if (a.matched != b.matched) return a.matched > b.matched;
+    return a.pattern > b.pattern;
+  });
+  std::map<int, int> kept;    // start -> end (inclusive); the accepted, mutually non-overlapping matches
+  for (const RawMatch& m : ms) {
+    int  s       = m.start;
+    int  e       = m.start + m.matched - 1;
+    bool overlap = false;
+    auto nx      = kept.upper_bound(s);    // first kept match starting after s
+    if (nx != kept.end() && nx->first <= e) overlap = true;
+    if (!overlap && nx != kept.begin()) {
+      auto pv = std::prev(nx);    // last kept match starting at or before s
+      if (pv->second >= s) overlap = true;
     }
-    result.push_back({best.pattern, best.sline, best.eline});
-    std::vector<RawMatch> rest;
-    rest.reserve(ms.size());
-    for (const RawMatch& it : ms) {
-      if (!match_overlap(it.start, it.start + it.matched - 1, best.start, best.start + best.matched - 1))
-        rest.push_back(it);
+    if (!overlap) {
+      kept.emplace(s, e);
+      result.push_back({m.pattern, m.sline, m.eline});
     }
-    ms.swap(rest);
   }
 
   return result;

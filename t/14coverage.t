@@ -202,4 +202,29 @@ my $eng     = eval { $bad_idx->matcher(quiet => 1) };
 ok(!$@, 'matcher() survives a malformed manifest');
 cmp_deeply($eng->find_matches('t/fixtures/licenses/04license.1.txt'), [], 'malformed-manifest index finds nothing');
 
+# --- remove_tombstones: drop named ids, no-op on empty input -------------------------------------
+my $drt = tempdir(CLEANUP => 1);
+my $rt  = Cavil::Matcher::Manifest->new(dir => $drt);
+$rt->add_tombstones(1, 2, 3, 4);
+$rt->remove_tombstones();            # no-op
+is_deeply([sort { $a <=> $b } @{$rt->tombstones}], [1, 2, 3, 4], 'remove_tombstones() with no ids is a no-op');
+$rt->remove_tombstones(2, 4, 99);    # 99 is not present; ignored
+is_deeply([sort { $a <=> $b } @{$rt->tombstones}], [1, 3], 'remove_tombstones drops exactly the named ids');
+
+# --- add_segment un-suppresses a re-added id -----------------------------------------------------
+# Tombstoning an id then re-adding it in a new segment must clear its tombstone, so it matches again
+# immediately (no wait for a merge). This is the lifecycle safety net for id reuse/restore.
+my $dre = tempdir(CLEANUP => 1);
+my $ire = Cavil::Matcher::Index->new(dir => $dre);
+my $tgt = "$dre/target.txt";
+open my $tf, '>:raw', $tgt or die $!;
+print {$tf} "permission is hereby granted\n";
+close $tf;
+$ire->add_segment([[1, 'permission is hereby granted']]);
+$ire->tombstone(1);
+is(scalar @{$ire->matcher(quiet => 1)->find_matches($tgt)}, 0, 'a tombstoned id is suppressed');
+$ire->add_segment([[1, 'permission is hereby granted']]);    # re-introduce id 1
+is_deeply($ire->_manifest->tombstones, [], 're-adding an id clears its tombstone');
+cmp_ok(scalar @{$ire->matcher(quiet => 1)->find_matches($tgt)}, '>', 0, 'the re-added id matches again');
+
 done_testing();

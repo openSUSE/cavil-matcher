@@ -13,6 +13,21 @@ use File::Temp qw(tempdir);
 
 sub slurp { open my $fh, '<:raw', $_[0] or die $!; local $/; my $c = <$fh>; close $fh; $c }
 
+# Pure-Perl CRC32 (matches cavil_crc32) so we can craft CRC-valid but structurally-malformed bags.
+# BagHeader layout: magic[8]@0, version@8, crc32@12, idf_count(u64)@16, pattern_count(u64)@24; payload@32.
+my @CRC_TABLE = map {
+  my $c = $_;
+  $c = ($c & 1) ? (0xEDB88320 ^ ($c >> 1)) : ($c >> 1) for 1 .. 8;
+  $c & 0xFFFFFFFF;
+} 0 .. 255;
+
+sub crc32 {
+  my $crc = 0xFFFFFFFF;
+  $crc = $CRC_TABLE[($crc ^ $_) & 0xFF] ^ ($crc >> 8) for unpack 'C*', $_[0];
+  return ($crc ^ 0xFFFFFFFF) & 0xFFFFFFFF;
+}
+sub reseal { my $b = shift; substr($b, 12, 4) = pack('V', crc32(substr($b, 32))); return $b }    # fix payload CRC
+
 my %patterns;
 for my $fn (glob('t/fixtures/licenses/04license.*.pattern')) {
   $fn =~ m/\.(\d+)\.pattern$/ or next;
@@ -75,6 +90,36 @@ is($loaded->load(write_bytes("$dir/garbage", 'not a bag file, just some bytes he
 my $corrupt = $good;
 substr($corrupt, length($corrupt) - 1, 1) = chr(ord(substr($corrupt, length($corrupt) - 1, 1)) ^ 0xFF);
 is($loaded->load(write_bytes("$dir/corrupt", $corrupt)), 0, 'flipped payload byte fails CRC');
+
+# Strictness (like the segment reader): a CRC-valid file with trailing bytes after the declared records,
+# or with a pattern's tf_idfs not in the strictly-ascending order compare2 relies on, must be rejected -
+# not loaded into a model that would then rank wrongly.
+{
+  # Trailing bytes: extend the payload, keep the counts, re-seal the CRC. The records still parse, but
+  # bytes remain afterwards.
+  my $trailing = reseal($good . ('!' x 8));
+  is($loaded->load(write_bytes("$dir/trailing", $trailing)), 0, 'trailing bytes after the records are rejected');
+
+  # Disorder one pattern's tf_idfs: find a pattern block with >=2 entries and swap its first two hashes so
+  # they are no longer ascending, then re-seal.
+  my $idf_count = unpack('Q<', substr($good, 16, 8));
+  my $off       = 32 + $idf_count * 16;                 # first pattern block
+  my $unsorted;
+  while ($off + 24 <= length($good)) {
+    my $tcount  = unpack('Q<', substr($good, $off + 16, 8));
+    my $entries = $off + 24;
+    if ($tcount >= 2) {
+      my $b = $good;
+      substr($b, $entries, 8) = substr($good, $entries + 16, 8);         # swap hash[0] <-> hash[1]
+      substr($b, $entries + 16, 8) = substr($good, $entries, 8);
+      $unsorted = reseal($b);
+      last;
+    }
+    $off = $entries + $tcount * 16;
+  }
+  ok($unsorted, 'found a pattern with >=2 tf_idfs to disorder');
+  is($loaded->load(write_bytes("$dir/unsorted", $unsorted)), 0, 'non-ascending tf_idfs are rejected');
+}
 
 cmp_deeply($loaded->best_for($sample, 1), $before, 'the existing model is intact after every failed load');
 

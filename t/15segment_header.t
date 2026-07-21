@@ -82,11 +82,6 @@ cmp_ok($skip_count, '>=', 1, 'the fixture segment has at least one skip to tampe
   substr($b, 24, 8) = pack('q<', -1);
   is(accepts($b), 0, 'a negative longest_pattern is rejected');
 }
-{
-  my $b = $good;
-  substr($b, 44, 4) = pack('V', $node_count + 1);    # more patterns than nodes is impossible
-  is(accepts($b), 0, 'a pattern_count exceeding node_count is rejected');
-}
 
 # --- Payload field: skip_value lives in a FlatSkip, so tampering it needs a recomputed CRC to isolate
 # the semantic check from the CRC check. FlatSkip is {u32 child_node; u8 skip_value; u8 pad[3]} = 8 bytes;
@@ -105,5 +100,23 @@ is(accepts(with_skip_value(3)),
   1, 'a re-sealed segment with a valid skip width still attaches (CRC recompute is sound)');
 is(accepts(with_skip_value(0)),   0, 'a zero skip width is rejected');
 is(accepts(with_skip_value(200)), 0, 'a skip width above MAX_SKIP is rejected');
+
+# pattern_count is NOT a structural bound: many patterns that normalize to the same token sequence
+# collapse onto one terminal node (newer id wins) yet each counts, so pattern_count legitimately exceeds
+# node_count. Such a segment must still attach - treating pattern_count as a bound would reject it.
+{
+  my $e = Cavil::Matcher::init_matcher;
+  $e->add_pattern($_, Cavil::Matcher::parse_tokens('copyleft')) for 1 .. 50;
+  my $dup = "$dir/dup.seg";
+  ok($e->dump($dup), 'built a segment with 50 duplicate-normalized patterns');
+  my $raw = slurp($dup);
+  cmp_ok(
+    unpack('V', substr($raw, 44, 4)),
+    '>',
+    unpack('V', substr($raw, 32, 4)),
+    'the duplicate segment really does have pattern_count > node_count'
+  );
+  is(accepts($raw), 1, 'a segment whose pattern_count exceeds node_count still attaches');
+}
 
 done_testing();

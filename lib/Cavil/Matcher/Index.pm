@@ -80,6 +80,12 @@ sub add_segment ($self, $patterns) {
   # still honoured for backward compatibility; only fresh writes are strict.)
   my $checksum = _checksum($path);
   croak "failed to checksum new segment $file" unless length $checksum;    # uncoverable branch true (I/O race)
+
+  # Introducing an id must un-suppress it: clear any tombstone for the ids in this segment, so a
+  # delete-then-re-add of the same id takes effect immediately rather than staying hidden until the next
+  # merge clears all tombstones. (Cavil's pattern ids are DB-immutable so reuse should not happen; this
+  # keeps the lifecycle correct if it ever does, instead of silently relying on that invariant.)
+  $man->remove_tombstones(map { $_->[0] } @$patterns);
   $man->add_segment(file => $file, checksum => $checksum, pattern_count => scalar @$patterns);
   $man->save;
   return $gen;
