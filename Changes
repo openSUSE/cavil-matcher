@@ -1,6 +1,6 @@
 Revision history for Cavil::Matcher
 
-0.01    Unreleased
+1.0    Unreleased
         - Initial release: the next-generation license pattern matcher for Cavil.
         - Segmented, incrementally-updatable index: adding or removing a pattern no longer
           rebuilds the whole compiled cache (base + append-only delta segments + tombstones).

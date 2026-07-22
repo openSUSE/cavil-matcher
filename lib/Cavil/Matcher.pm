@@ -6,7 +6,7 @@ package Cavil::Matcher;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '1.00';
 
 require XSLoader;
 XSLoader::load('Cavil::Matcher', $VERSION);
