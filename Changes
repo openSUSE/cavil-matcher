@@ -1,5 +1,20 @@
 Revision history for Cavil::Matcher
 
+1.02   2026-08-27
+        - Snippet code search: a new winnowed-fingerprint index for "where does this code already exist"
+          provenance queries, alongside the license-pattern matcher. fingerprint_file winnows a file's
+          tokens (k tokens per gram, w grams per window) into content fingerprints; a fingerprint segment
+          stores them keyed by a 128-bit content hash rather than filenames (so it stays lean and joins to
+          the Cavil database), and scoring ranks candidates by both-direction containment with exact
+          matched-line spans for highlighting.
+        - Cavil::Matcher::FpIndex is the pure-Perl lifecycle over a directory of fingerprint segments
+          (incremental add_segment, manifest/generation, memory-mapped shared reads), reusing the same
+          on-disk discipline as the pattern index: versioned, CRC-checksummed, structure-validated on
+          every open, with corrupt or foreign files rejected rather than mis-read.
+        - Byte-identical files are de-duplicated by content hash, so the same source shipped across many
+          package versions is stored once, with no package-name parsing.
+        - Additive only: the license-pattern format is unchanged and no migration is needed.
+
 1.01   2026-08-04
         - Big indexing speedup: the scan path (load/attach) no longer re-checksums a segment's whole
           payload on every open. A compiled segment is an immutable, atomically-published cache that is

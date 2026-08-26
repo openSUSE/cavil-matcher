@@ -4,6 +4,7 @@
 /Makefile.old
 /pm_to_blib
 MYMETA.*
+Matcher.c            # generated from Matcher.xs by xsubpp on every build
 *.o
 *.bs
 *.def
