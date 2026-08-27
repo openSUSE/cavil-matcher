@@ -256,7 +256,7 @@ std::string FpSegment::content_hash_hex(uint32_t content_ref) const {
 }
 
 std::vector<FpMatch> FpSegment::score(const std::vector<uint64_t>& query_fps, int top_n, double min_containment,
-                                      bool want_regions) const {
+                                      uint64_t max_df, bool want_regions) const {
   std::vector<FpMatch> out;
   if (!_valid || query_fps.empty()) return out;
 
@@ -270,26 +270,36 @@ std::vector<FpMatch> FpSegment::score(const std::vector<uint64_t>& query_fps, in
   };
   std::unordered_map<uint32_t, Acc> per;    // content_ref -> accumulator
 
+  // Containment is over the query fingerprints actually used. With DF-pruning on (max_df > 0), a fingerprint
+  // that appears in more than max_df records is boilerplate: it is skipped, so it neither adds coincidental
+  // matches nor counts against containment. Off (max_df == 0) leaves every distinct query fingerprint in.
+  uint64_t denom = 0;
   for (uint64_t qfp : q) {
     const FpRec* lo = std::lower_bound(_recs, _recs + _header->rec_count, qfp,
                                        [](const FpRec& r, uint64_t v) { return r.fp < v; });
+    if (max_df > 0) {
+      const FpRec* hi = std::upper_bound(_recs, _recs + _header->rec_count, qfp,
+                                         [](uint64_t v, const FpRec& r) { return v < r.fp; });
+      if ((uint64_t)(hi - lo) > max_df) continue;    // too common to be distinctive: prune it
+    }
+    ++denom;
+
     std::unordered_set<uint32_t> seen;      // one content counts once toward this qfp's hit
     for (const FpRec* r = lo; r < _recs + _header->rec_count && r->fp == qfp; ++r) {
       uint32_t cref = r->content_ref;
       if (cref >= _header->content_count) continue;    // bounds-check the ref rather than scanning on open
       Acc& a = per[cref];
       if (seen.insert(cref).second) a.hits++;
-      // ponytail: regions collected for every matched content, not just the returned top_n (bounded by
-      // DF-pruning). If a broad query proves costly, rank on hits first and gather regions for top_n only.
       if (want_regions) a.regions.push_back({fp_loc_sline(r->loc), fp_loc_span(r->loc), qfp});
     }
   }
+  if (denom == 0) return out;    // every query fingerprint was pruned as boilerplate
 
   out.reserve(per.size());
   for (auto& kv : per) {
     // The containment floor is applied here so sub-floor coincidences (a query full of common fingerprints can
     // match hundreds of thousands of them) never leave the segment to be filtered by the caller.
-    double containment = (double)kv.second.hits / (double)q.size();
+    double containment = (double)kv.second.hits / (double)denom;
     if (containment < min_containment) continue;
 
     uint32_t cref  = kv.first;

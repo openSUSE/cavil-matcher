@@ -183,11 +183,16 @@ sub fingerprints_for ($self, $path) {
 # common fingerprints does not ship hundreds of thousands of coincidental matches back for the caller to
 # filter. It is a plain floor, so the caller still owns the value and can change it.
 #
+# $max_df (optional, 0 = off) ignores query fingerprints that appear in more than max_df records of a segment:
+# boilerplate that matches nearly everything, coincidentally. It neither adds matches nor counts against
+# containment. Off by default so behaviour is unchanged until a caller opts in (a compacted single-segment
+# index makes the per-segment record count the true document frequency).
+#
 # Opened segments are cached and reused across calls, because opening them (memory-mapping and faulting in
 # the header) is a fixed cost that otherwise dominates every search on a long-lived query server, regardless
 # of the query. Segments are immutable append-only files, so a cached handle always maps the same bytes; a
 # handle whose segment has left the manifest (compacted away) is dropped, releasing its mapping.
-sub search ($self, $query_fps, $top_n = 10, $min_containment = 0) {
+sub search ($self, $query_fps, $top_n = 10, $min_containment = 0, $max_df = 0) {
   my $man   = $self->_manifest;
   my $cache = $self->{open} //= {};
 
@@ -202,7 +207,7 @@ sub search ($self, $query_fps, $top_n = 10, $min_containment = 0) {
       $fp = Cavil::Matcher::fp_open($path) or next;
       $cache->{$file} = $fp;
     }
-    push @all, @{$fp->score($query_fps, $top_n > 0 ? $top_n : 0, $min_containment)};
+    push @all, @{$fp->score($query_fps, $top_n > 0 ? $top_n : 0, $min_containment, $max_df)};
   }
   delete @$cache{grep { !$active{$_} } keys %$cache};
 

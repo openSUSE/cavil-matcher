@@ -47,7 +47,7 @@ SV*        fp_content_hash(const char* path);                     // 32-hex cont
 HV*        fp_build(AV* files, const char* out_path, int k, int w, int dedup);
 FpSegment* fp_open(const char* path);                             // NULL on failure
 void       fp_destroy(FpSegment* s);
-AV*        fp_score(FpSegment* s, AV* query_fps, int top_n, double min_containment);    // [[hash, hits, containment, of, regions], ...]
+AV*        fp_score(FpSegment* s, AV* query_fps, int top_n, double min_containment, UV max_df);    // [[hash, hits, containment, of, regions], ...]
 int        fp_verify(FpSegment* s, const char* path);
 
 // Bag

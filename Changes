@@ -10,6 +10,10 @@ Revision history for Cavil::Matcher
           inside the scorer instead of being returned for the caller to filter. A query dominated by common
           fingerprints can match hundreds of thousands of contents, almost all coincidental, so applying the
           floor at this level avoids building and returning them. Defaults to 0 (return everything).
+        - score() and FpIndex::search() also take an optional max_df: query fingerprints appearing in more
+          than that many records of a segment are ignored (boilerplate that matches nearly everything, adding
+          only coincidental hits and skewing containment). Off by default (0). Intended for a compacted
+          single-segment index, where a segment's record count for a fingerprint is its document frequency.
 
 1.03   2026-08-27
         - Fingerprint scoring now reports, for each matched fingerprint, the query fingerprint value it was,

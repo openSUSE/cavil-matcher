@@ -69,6 +69,26 @@ subtest 'an optional containment floor filters inside the scorer' => sub {
   ok scalar @{$idx->search($q, 5, 0)} >= scalar @{$idx->search($q, 5, 0.99)}, 'a higher floor never returns more';
 };
 
+subtest 'optional DF-pruning ignores fingerprints that are common across the segment' => sub {
+
+  # A shared block in several files makes its fingerprints common; unique tails keep the files distinct.
+  my $shared = join ' ', map {"shared$_ common$_ boiler$_ plate$_"} 1 .. 20;
+  my @files  = map { write_src("df$_.txt", "$shared unique${_}a unique${_}b unique${_}c") } 1 .. 6;
+  my $ddir   = File::Spec->catdir($root, 'index_df');
+  my $dfx    = Cavil::Matcher::FpIndex->new(dir => $ddir, k => 3, w => 4);
+  $dfx->add_segment(\@files);
+
+  # A query that is only the shared block matches every file through the common fingerprints...
+  my $shared_file = write_src('shared_only.txt', $shared);
+  my $q           = $dfx->fingerprints_for($shared_file);
+  my $without     = $dfx->search($q, 20, 0, 0);
+  ok scalar @$without >= 6, 'without pruning the shared block matches every file carrying it';
+
+  # ...but with a DF cap below the number of carriers, those fingerprints are pruned and the noise collapses.
+  my $with = $dfx->search($q, 20, 0, 3);
+  ok scalar @$with < scalar @$without, 'DF-pruning drops the common-fingerprint matches';
+};
+
 subtest 'incremental add: a second segment is searched alongside the first' => sub {
   my $g = $idx->add_segment([$file_c]);
   is $g, 2, 'second segment => generation 2';

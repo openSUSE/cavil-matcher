@@ -84,9 +84,9 @@ Cavil::Matcher::Fingerprints fp_open(const char *path)
 
 MODULE = Cavil::Matcher  PACKAGE = Cavil::Matcher::Fingerprints
 
-AV *score(Cavil::Matcher::Fingerprints self, AV *query_fps, int top_n, double min_containment = 0.0)
+AV *score(Cavil::Matcher::Fingerprints self, AV *query_fps, int top_n, double min_containment = 0.0, UV max_df = 0)
   CODE:
-    RETVAL = fp_score(self, query_fps, top_n, min_containment);
+    RETVAL = fp_score(self, query_fps, top_n, min_containment, max_df);
   OUTPUT:
     RETVAL
 

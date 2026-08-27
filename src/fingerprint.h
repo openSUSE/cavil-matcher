@@ -152,7 +152,7 @@ public:
   // want_regions is false the matched-region lists are left empty (a small saving for callers that only
   // need the ranking).
   std::vector<FpMatch> score(const std::vector<uint64_t>& query_fps, int top_n, double min_containment = 0.0,
-                             bool want_regions = true) const;
+                             uint64_t max_df = 0, bool want_regions = true) const;
 
 private:
   std::string content_hash_hex(uint32_t content_ref) const;

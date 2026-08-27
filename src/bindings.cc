@@ -416,7 +416,7 @@ FpSegment* fp_open(const char* path) {
 
 void fp_destroy(FpSegment* s) { delete s; }
 
-AV* fp_score(FpSegment* s, AV* query_fps, int top_n, double min_containment) {
+AV* fp_score(FpSegment* s, AV* query_fps, int top_n, double min_containment, UV max_df) {
   dTHX;
   std::vector<uint64_t> q;
   SSize_t               top = av_len(query_fps);
@@ -425,7 +425,7 @@ AV* fp_score(FpSegment* s, AV* query_fps, int top_n, double min_containment) {
     if (e && *e) q.push_back(SvUV(*e));
   }
   AV* ret = newAV();
-  for (const FpMatch& m : s->score(q, top_n, min_containment)) {
+  for (const FpMatch& m : s->score(q, top_n, min_containment, (uint64_t)max_df)) {
     AV* row = newAV();
     av_push(row, newSVpv(m.content_hash.data(), m.content_hash.length()));
     av_push(row, newSVuv(m.hits));
