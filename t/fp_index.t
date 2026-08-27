@@ -62,6 +62,13 @@ subtest 'search finds the right file and separates unrelated code' => sub {
   ok !(grep { $_->[0] eq ch($file_c) } @$hits), 'unrelated file c (not indexed) is absent';
 };
 
+subtest 'an optional containment floor filters inside the scorer' => sub {
+  my $q = $idx->fingerprints_for($file_a);
+  is $idx->search($q, 5, 0.99)->[0][0], ch($file_a), 'the exact file clears a high floor';
+  is scalar @{$idx->search($q, 5, 1.01)}, 0, 'nothing clears an impossible floor';
+  ok scalar @{$idx->search($q, 5, 0)} >= scalar @{$idx->search($q, 5, 0.99)}, 'a higher floor never returns more';
+};
+
 subtest 'incremental add: a second segment is searched alongside the first' => sub {
   my $g = $idx->add_segment([$file_c]);
   is $g, 2, 'second segment => generation 2';

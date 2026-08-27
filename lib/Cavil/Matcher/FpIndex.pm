@@ -179,11 +179,15 @@ sub fingerprints_for ($self, $path) {
 # comparable, so merging is a plain concatenate-and-sort. Damaged or missing segments are skipped, never
 # fatal.
 #
+# $min_containment (optional) drops matches below that containment inside the scorer, so a query full of
+# common fingerprints does not ship hundreds of thousands of coincidental matches back for the caller to
+# filter. It is a plain floor, so the caller still owns the value and can change it.
+#
 # Opened segments are cached and reused across calls, because opening them (memory-mapping and faulting in
 # the header) is a fixed cost that otherwise dominates every search on a long-lived query server, regardless
 # of the query. Segments are immutable append-only files, so a cached handle always maps the same bytes; a
 # handle whose segment has left the manifest (compacted away) is dropped, releasing its mapping.
-sub search ($self, $query_fps, $top_n = 10) {
+sub search ($self, $query_fps, $top_n = 10, $min_containment = 0) {
   my $man   = $self->_manifest;
   my $cache = $self->{open} //= {};
 
@@ -198,7 +202,7 @@ sub search ($self, $query_fps, $top_n = 10) {
       $fp = Cavil::Matcher::fp_open($path) or next;
       $cache->{$file} = $fp;
     }
-    push @all, @{$fp->score($query_fps, $top_n > 0 ? $top_n : 0)};
+    push @all, @{$fp->score($query_fps, $top_n > 0 ? $top_n : 0, $min_containment)};
   }
   delete @$cache{grep { !$active{$_} } keys %$cache};
 

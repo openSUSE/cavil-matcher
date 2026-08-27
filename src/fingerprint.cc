@@ -255,7 +255,7 @@ std::string FpSegment::content_hash_hex(uint32_t content_ref) const {
   return std::string(buf, 32);
 }
 
-std::vector<FpMatch> FpSegment::score(const std::vector<uint64_t>& query_fps, int top_n,
+std::vector<FpMatch> FpSegment::score(const std::vector<uint64_t>& query_fps, int top_n, double min_containment,
                                       bool want_regions) const {
   std::vector<FpMatch> out;
   if (!_valid || query_fps.empty()) return out;
@@ -287,12 +287,17 @@ std::vector<FpMatch> FpSegment::score(const std::vector<uint64_t>& query_fps, in
 
   out.reserve(per.size());
   for (auto& kv : per) {
+    // The containment floor is applied here so sub-floor coincidences (a query full of common fingerprints can
+    // match hundreds of thousands of them) never leave the segment to be filtered by the caller.
+    double containment = (double)kv.second.hits / (double)q.size();
+    if (containment < min_containment) continue;
+
     uint32_t cref  = kv.first;
     uint32_t cfps  = _contents[cref].fp_count;
     FpMatch  m;
     m.content_hash   = content_hash_hex(cref);
     m.hits           = kv.second.hits;
-    m.containment    = (double)kv.second.hits / (double)q.size();
+    m.containment    = containment;
     m.containment_of = cfps ? (double)kv.second.hits / (double)cfps : 0.0;
     m.regions        = std::move(kv.second.regions);
     out.push_back(std::move(m));
