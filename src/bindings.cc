@@ -434,8 +434,9 @@ AV* fp_score(FpSegment* s, AV* query_fps, int top_n) {
     AV* regions = newAV();
     for (const auto& r : m.regions) {
       AV* reg = newAV();
-      av_push(reg, newSVuv(r.first));
-      av_push(reg, newSVuv(r.second));
+      av_push(reg, newSVuv(r.sline));
+      av_push(reg, newSVuv(r.span));
+      av_push(reg, newSVuv(r.fp));
       av_push(regions, newRV_noinc((SV*)reg));
     }
     av_push(row, newRV_noinc((SV*)regions));

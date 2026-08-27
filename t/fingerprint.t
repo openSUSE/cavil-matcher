@@ -79,7 +79,12 @@ subtest 'exact re-query: full self-containment, ranked first, with a highlight r
   is $self->[2], 1.0, 'containment (query direction) is 1.0';
   is $self->[3], 1.0, 'containment_of (content direction) is 1.0 for the exact same content';
   ok @{$self->[4]} > 0, 'matched regions are returned for highlighting';
-  is scalar(grep { @$_ == 2 && $_->[1] >= 0 } @{$self->[4]}), scalar(@{$self->[4]}), 'regions are [sline, span]';
+  is scalar(grep { @$_ == 3 && $_->[1] >= 0 } @{$self->[4]}), scalar(@{$self->[4]}), 'regions are [sline, span, fp]';
+
+  # each region carries the query fingerprint value it matched, so a caller can map matches to query
+  # positions (distinguishing an aligned copy from scattered coincidental hits).
+  my %qset = map { $_ => 1 } @qfps;
+  is scalar(grep { $qset{$_->[2]} } @{$self->[4]}), scalar(@{$self->[4]}), 'each region names a query fingerprint';
 };
 
 subtest 'a shared block is NOT deduplicated away, and both containment directions are reported' => sub {

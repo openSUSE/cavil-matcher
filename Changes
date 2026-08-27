@@ -1,5 +1,12 @@
 Revision history for Cavil::Matcher
 
+1.03   2026-08-27
+        - Fingerprint scoring now reports, for each matched fingerprint, the query fingerprint value it was,
+          appended to each region tuple after the existing start line and span. This lets a caller map
+          matches back to their query positions - enough to tell an aligned copy from scattered coincidental
+          hits, and to derive each query fingerprint's document frequency from a full result set. Backward
+          compatible: the (start_line, span) pair at the front of every region tuple is unchanged.
+
 1.02   2026-08-27
         - Snippet code search: a new winnowed-fingerprint index for "where does this code already exist"
           provenance queries, alongside the license-pattern matcher. fingerprint_file winnows a file's

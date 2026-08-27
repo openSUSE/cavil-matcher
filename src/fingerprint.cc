@@ -265,8 +265,8 @@ std::vector<FpMatch> FpSegment::score(const std::vector<uint64_t>& query_fps, in
   q.erase(std::unique(q.begin(), q.end()), q.end());    // containment is over DISTINCT query fingerprints
 
   struct Acc {
-    uint32_t                                   hits = 0;
-    std::vector<std::pair<uint32_t, uint32_t>> regions;
+    uint32_t              hits = 0;
+    std::vector<FpRegion> regions;
   };
   std::unordered_map<uint32_t, Acc> per;    // content_ref -> accumulator
 
@@ -281,7 +281,7 @@ std::vector<FpMatch> FpSegment::score(const std::vector<uint64_t>& query_fps, in
       if (seen.insert(cref).second) a.hits++;
       // ponytail: regions collected for every matched content, not just the returned top_n (bounded by
       // DF-pruning). If a broad query proves costly, rank on hits first and gather regions for top_n only.
-      if (want_regions) a.regions.emplace_back(fp_loc_sline(r->loc), fp_loc_span(r->loc));
+      if (want_regions) a.regions.push_back({fp_loc_sline(r->loc), fp_loc_span(r->loc), qfp});
     }
   }
 

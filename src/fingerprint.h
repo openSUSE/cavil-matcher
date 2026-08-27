@@ -118,14 +118,23 @@ static inline uint32_t fp_pack_loc(uint32_t sline, uint32_t eline) {
 static inline uint32_t fp_loc_sline(uint32_t loc) { return loc >> 8; }
 static inline uint32_t fp_loc_span(uint32_t loc) { return loc & 0xFF; }
 
+// One matched fingerprint occurrence: the content line span it covers, and the query fingerprint value it
+// was. The value (not an index) is the key because score() sorts the query set internally, so a caller maps
+// a match back to its query position by value. This lets a caller tell an aligned copy from a scattered one.
+struct FpRegion {
+  uint32_t sline;
+  uint32_t span;
+  uint64_t fp;
+};
+
 // One scored candidate: the matched content and how much of the query it contains (the match percentage),
-// plus the reverse direction and the exact matched line regions for highlighting.
+// plus the reverse direction and the exact matched fingerprints for highlighting and alignment.
 struct FpMatch {
   std::string content_hash;    // 32 hex chars (hi, lo), joinable to the Cavil database
   uint32_t    hits;            // distinct query fingerprints found in this content
   double      containment;     // hits / distinct query fingerprints (how much of the query is here)
   double      containment_of;  // hits / this content's fingerprints (how much of this content is the query)
-  std::vector<std::pair<uint32_t, uint32_t>> regions;    // (start_line, span) of each matched fingerprint
+  std::vector<FpRegion> regions;    // each matched fingerprint: content line span + the query fp value
 };
 
 // Read-only view over a compiled fingerprint segment. open() mmaps and validates structure; a query
