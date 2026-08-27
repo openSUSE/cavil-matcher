@@ -172,6 +172,15 @@ weighting containment with the license risk Cavil already knows for the matched 
 copyleft code reads louder than resembling permissive code. The result is advisory and probabilistic,
 never an automated verdict.
 
+Containment is set membership over the whole file, not an alignment: it asks whether each of the snippet's
+fingerprints exists anywhere in the content, not whether they line up in one place. That makes it robust to
+edits, which is the point for provenance: rename a function or change a few tokens and it still matches its
+origin. The flip side is that it is position-blind, and a single change lowers the score only if the one
+fingerprint it perturbs appears nowhere else in the matched file, which in a file that already uses those
+tokens it usually does. So a lightly modified copy can still report 100%, and that "100%" means "every
+fingerprint of your snippet is present in this file", not "byte-identical". Telling a verbatim copy from a
+modified one would need positional/alignment scoring layered on top; containment alone does not, by design.
+
 Two properties matter for correctness. First, the index never collapses a fingerprint: every occurrence
 is a separate record, so a fingerprint present in fifty files returns all fifty. Nothing that was indexed
 becomes unfindable. Second, the index is content-addressed by a package version's checksum and lives under
