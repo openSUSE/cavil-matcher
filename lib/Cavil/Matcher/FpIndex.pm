@@ -177,17 +177,31 @@ sub fingerprints_for ($self, $path) {
 # candidates as [filename, hits, containment], best containment first. Because each file lives in exactly
 # one segment and every segment scores against the same query, per-segment containments are directly
 # comparable, so merging is a plain concatenate-and-sort. Damaged or missing segments are skipped, never
-# fatal. The opened segments are released as each is scored (the returned rows are plain copies), so this
-# is safe to call repeatedly from a long-lived query server.
+# fatal.
+#
+# Opened segments are cached and reused across calls, because opening them (memory-mapping and faulting in
+# the header) is a fixed cost that otherwise dominates every search on a long-lived query server, regardless
+# of the query. Segments are immutable append-only files, so a cached handle always maps the same bytes; a
+# handle whose segment has left the manifest (compacted away) is dropped, releasing its mapping.
 sub search ($self, $query_fps, $top_n = 10) {
-  my $man = $self->_manifest;
-  my @all;
+  my $man   = $self->_manifest;
+  my $cache = $self->{open} //= {};
+
+  my (%active, @all);
   for my $seg (@{$man->segments}) {
-    my $path = File::Spec->catfile($self->{dir}, $seg->{file});
-    next unless -r $path;
-    my $fp = Cavil::Matcher::fp_open($path) or next;
+    my $file = $seg->{file};
+    $active{$file} = 1;
+    my $fp = $cache->{$file};
+    unless ($fp) {
+      my $path = File::Spec->catfile($self->{dir}, $file);
+      next unless -r $path;
+      $fp = Cavil::Matcher::fp_open($path) or next;
+      $cache->{$file} = $fp;
+    }
     push @all, @{$fp->score($query_fps, $top_n > 0 ? $top_n : 0)};
   }
+  delete @$cache{grep { !$active{$_} } keys %$cache};
+
   @all = sort { $b->[2] <=> $a->[2] } @all;
   @all = @all[0 .. $top_n - 1] if $top_n > 0 && @all > $top_n;
   return \@all;

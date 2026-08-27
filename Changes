@@ -1,5 +1,12 @@
 Revision history for Cavil::Matcher
 
+1.04   2026-08-27
+        - FpIndex now caches opened segments and reuses them across searches instead of reopening every
+          segment on every query. Opening a segment is a fixed per-query cost that otherwise dominated search
+          time on a long-lived query server, regardless of the query. Segments are immutable append-only
+          files, so a cached handle always maps the same bytes; a handle whose segment has been compacted out
+          of the manifest is dropped on the next search. Results are unchanged.
+
 1.03   2026-08-27
         - Fingerprint scoring now reports, for each matched fingerprint, the query fingerprint value it was,
           appended to each region tuple after the existing start line and span. This lets a caller map

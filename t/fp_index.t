@@ -108,4 +108,23 @@ subtest 'search tolerates a damaged segment instead of dying' => sub {
   is $hits->[0][0], ch($file_a), 'intact base still answers while the broken delta is skipped';
 };
 
+subtest 'segment handles are cached across searches and pruned on compaction' => sub {
+  my $dir2   = File::Spec->catdir($root, 'index2');
+  my $reader = Cavil::Matcher::FpIndex->new(dir => $dir2, k => 3, w => 4);
+  $reader->add_segment([$file_a]);
+  $reader->add_segment([$file_b]);
+
+  $reader->search_file($file_a, 5);
+  my @files = keys %{$reader->{open}};
+  is scalar @files, 2, 'both active segments are cached after a search';
+
+  my $handle = $reader->{open}{$files[0]};
+  $reader->search_file($file_b, 5);
+  is $reader->{open}{$files[0]}, $handle, 'a second search reuses the cached handle instead of reopening';
+
+  $reader->merge([$file_a, $file_b]);
+  $reader->search_file($file_a, 5);
+  is scalar keys %{$reader->{open}}, 1, 'the handle for a compacted-away segment is dropped, leaving the base';
+};
+
 done_testing;
